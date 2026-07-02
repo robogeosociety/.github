@@ -111,9 +111,10 @@ for r in $repos; do
       done
       if ! git diff --cached --quiet; then
         git commit -q -m "chore: standardize @claude / lint / retire newspaper (via tommyroar/.github sync)"
-        git push -q -u origin "$BRANCH"
-        gh pr create --fill --title "Standardize: @claude + lint + retire newspaper" \
-          --body "Automated sync from tommyroar/.github. Canonical @claude workflow, pre-commit/ruff for Python, newspaper removed." || true
+        git push -q -u --force origin "$BRANCH"
+        gh pr view "$BRANCH" >/dev/null 2>&1 && { echo "  (PR already open)"; } || \
+        gh pr create --head "$BRANCH" --title "Standardize: @claude + lint + retire newspaper" \
+          --body "Automated sync from tommyroar/.github. Canonical @claude workflow, pre-commit/ruff for Python, newspaper removed. 🤖 Generated with Claude Code" || true
       fi
     )
     rm -rf "$tmp"
