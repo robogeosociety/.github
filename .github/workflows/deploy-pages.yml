@@ -40,8 +40,6 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
     concurrency:
       group: github-pages-${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
       cancel-in-progress: false
