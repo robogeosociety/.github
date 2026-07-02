@@ -1,10 +1,9 @@
 name: Deploy Pages (reusable)
 
 # Canonical GitHub Pages SPA deploy — gh-pages-BRANCH model (peaceiris).
-# Push to main  -> production at https://tommyroar.github.io/<slug>/
-# Pull request   -> staging at   https://tommyroar.github.io/<slug>/staging/  (single shared slot)
-# NOTE: repos on the official actions/deploy-pages *artifact* model (e.g. sporty40)
-# can't share this without switching their Pages source back to the gh-pages branch.
+# Push to main -> production at https://tommyroar.github.io/<slug>/
+# Pull request  -> staging at   https://tommyroar.github.io/<slug>/staging/  (single shared slot)
+# Callers pass `secrets: inherit` so MAPBOX_ACCESS_TOKEN flows through.
 
 on:
   workflow_call:
@@ -28,21 +27,14 @@ on:
       node_version:
         default: "20"
         type: string
-    secrets:
-      MAPBOX_ACCESS_TOKEN:
-        required: false
 
 permissions:
   contents: write
   pull-requests: write
-  deployments: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    concurrency:
-      group: github-pages-${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
