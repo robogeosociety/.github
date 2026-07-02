@@ -1,0 +1,12 @@
+name: hello-reusable
+on:
+  workflow_call:
+    inputs:
+      who:
+        default: world
+        type: string
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "hello ${{ inputs.who }}"
