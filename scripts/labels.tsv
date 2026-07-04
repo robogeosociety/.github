@@ -16,12 +16,10 @@ parked	BFD4F2	Deliberately shelved — revisit before acting
 #
 # ── Proposal + merge lane ──────────────────────────────────────────────────────
 # `proposal` renders an open PR's docs as a draft-banded dev-wiki preview before
-# merge. `automerge` merges once every check is green; the hold trio blocks it.
+# merge. `automerge` merges once every check is green; `blocked` holds it.
 proposal	5319E7	Render this open PR's docs as a draft-banded preview on the dev wiki (proposals lane)
 automerge	0E8A16	Merged automatically once every check is green (automerge.yml)
-hold	B60205	Holds auto-merge (blocking-comments gate)
 blocked	B60205	Holds auto-merge (blocking-comments gate)
-do-not-merge	B60205	Holds auto-merge (blocking-comments gate)
 #
 # ── PR-description gate bypasses ────────────────────────────────────────────────
 # Escape hatches named in PR_FRAMEWORK.md for the two CI gates. Provisioning them

@@ -60,8 +60,8 @@ the whole fleet in compliance, running on the **self-hosted runner on the Mac mi
 
 The canonical label set spans the three org-wide workflows: the **issue/task system**
 (`human-task`, `machine-task`, `parked`), the **proposal + merge lane** (`proposal`,
-`automerge`, and the `hold`/`blocked`/`do-not-merge` guards), and the **PR-gate
-bypasses** the framework documents (`skip-structure-gate`, `skip-style-review`). Edit
+`automerge`, and the `blocked` guard), and the **PR-gate bypasses** the framework
+documents (`skip-structure-gate`, `skip-style-review`). Edit
 `labels.tsv` to change the taxonomy; the next fleet-sync propagates it.
 
 Scheduled runs apply automatically (new repos self-heal into compliance); manual
