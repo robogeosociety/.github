@@ -1,0 +1,80 @@
+name: Fleet Sync
+
+# Scheduled CI/CD that manages every owned repo from this root (.github) repo.
+# It just drives the two scripts that already exist here, in order:
+#   1. scripts/repo-sync.sh — mirror every owned repo into the local checkout root
+#      (/Volumes/dev): clone the missing ones, `git fetch --prune` the rest.
+#   2. scripts/sync.sh      — standardize each mirrored repo against the canonical
+#      files in this repo (@claude, the PR-description gates, ruff), opening a PR
+#      per repo. This is what pushes the pr-structure-gate / pr-style-review
+#      workflows out to the fleet.
+#
+# Runs on the self-hosted GitHub Actions runner on the Mac mini (a container with
+# the /Volumes/dev checkout root mounted). Weekly by default so new/changed repos
+# self-heal into compliance; also runnable on demand. Manual runs default to a
+# read-only DRY-RUN; scheduled runs always apply.
+#
+# ── Runner setup (one-time) ────────────────────────────────────────────────────
+#  • Register the mini's runner with the labels in `runs-on` below
+#    (`self-hosted`, `macOS`, `fleet`).
+#  • Mount the checkout root (/Volumes/dev) into the runner container.
+#  • Auth for cross-repo `gh` calls, either:
+#      – `gh auth login` on the runner (persists in its keyring), OR
+#      – set the FLEET_SYNC_TOKEN repo secret to a PAT with `repo` + `workflow`
+#        scope across the org (used as GH_TOKEN below; empty falls back to keyring).
+#  • Set the CLAUDE_CODE_OAUTH_TOKEN repo secret (sync.sh needs it to seed the
+#    same secret into each managed repo when applying).
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'        # Mondays 07:17 UTC — weekly self-heal
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply changes (mirror + open standardization PRs). Off = dry-run.'
+        type: boolean
+        default: false
+
+# One fleet sync at a time; let an in-flight run finish rather than interleave
+# git writes into /Volumes/dev.
+concurrency:
+  group: fleet-sync
+  cancel-in-progress: false
+
+jobs:
+  fleet-sync:
+    runs-on: [self-hosted, macOS, fleet]
+    timeout-minutes: 60
+    env:
+      # gh uses this when non-empty; empty string falls back to the runner's keyring.
+      GH_TOKEN: ${{ secrets.FLEET_SYNC_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # Scheduled runs always apply; manual runs honor the toggle (default dry-run).
+      APPLY: ${{ (github.event_name == 'schedule' || inputs.apply) && '--apply' || '' }}
+      MODE: ${{ (github.event_name == 'schedule' || inputs.apply) && 'apply' || 'dry-run' }}
+    steps:
+      - name: Check out canonical files (this root repo)
+        uses: actions/checkout@v4
+
+      - name: Mirror all owned repos into /Volumes/dev
+        run: |
+          echo "::group::repo-sync.sh ${APPLY:-(dry-run)}"
+          ./scripts/repo-sync.sh ${APPLY}
+          echo "::endgroup::"
+
+      - name: Standardize repos against canonical (open PRs)
+        run: |
+          echo "::group::sync.sh ${APPLY:-(dry-run)}"
+          ./scripts/sync.sh ${APPLY}
+          echo "::endgroup::"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Fleet sync — ${MODE}"
+            echo ""
+            echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Mirror: \`repo-sync.sh ${APPLY}\` → /Volumes/dev"
+            echo "- Standardize: \`sync.sh ${APPLY}\` (per-repo PRs from canonical files)"
+          } >> "$GITHUB_STEP_SUMMARY"

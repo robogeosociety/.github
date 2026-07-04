@@ -10,14 +10,18 @@
 # What it does per owned, non-fork, non-archived repo:
 #   1. ensure the CLAUDE_CODE_OAUTH_TOKEN Actions secret is set
 #   2. install/refresh .github/workflows/claude.yml            (canonical @claude)
-#   3. remove .github/workflows/pr-newspaper.yml               (newspaper retired)
-#   4. Python repos: install .pre-commit-config.yaml, and lint.yml if ruff isn't already in CI
+#   3. install/refresh .github/workflows/pr-structure-gate.yml (hard PR-desc gate)
+#   4. install/refresh .github/workflows/pr-style-review.yml   (agentic style gate)
+#   5. remove .github/workflows/pr-newspaper.yml               (old newspaper retired)
+#   6. Python repos: install .pre-commit-config.yaml, and lint.yml if ruff isn't already in CI
 # File changes land on a branch + PR (never pushed straight to main).
 set -euo pipefail
 
 OWNER=tommyroar
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_SRC="$ROOT/.github/workflow-templates/claude.yml"
+STRUCTURE_SRC="$ROOT/.github/workflow-templates/pr-structure-gate.yml"
+STYLE_SRC="$ROOT/.github/workflow-templates/pr-style-review.yml"
 PRECOMMIT_SRC="$ROOT/standard/.pre-commit-config.yaml"
 LINT_SRC="$ROOT/standard/workflows/lint.yml"
 BRANCH="chore/standardize-sync"
@@ -77,6 +81,20 @@ for r in $repos; do
     echo "  NOTE: walksheds has an embedded @claude job in ci.yml — remove it by hand to avoid double-trigger."
   fi
 
+  # PR-description gates: the hard structural CI gate + the agentic style/length gate.
+  if api_exists "$r" ".github/workflows/pr-structure-gate.yml"; then
+    echo "  pr-structure-gate.yml : present (refresh to canonical)"
+  else
+    echo "  pr-structure-gate.yml : MISSING -> add"
+  fi
+  changes+=("put:.github/workflows/pr-structure-gate.yml:$STRUCTURE_SRC")
+  if api_exists "$r" ".github/workflows/pr-style-review.yml"; then
+    echo "  pr-style-review.yml   : present (refresh to canonical)"
+  else
+    echo "  pr-style-review.yml   : MISSING -> add"
+  fi
+  changes+=("put:.github/workflows/pr-style-review.yml:$STYLE_SRC")
+
   if api_exists "$r" ".github/workflows/pr-newspaper.yml"; then
     echo "  pr-newspaper.yml : present -> REMOVE"
     changes+=("del:.github/workflows/pr-newspaper.yml")
@@ -110,11 +128,11 @@ for r in $repos; do
         elif [ "$op" = del ]; then git rm -q --ignore-unmatch "${rest}"; fi
       done
       if ! git diff --cached --quiet; then
-        git commit -q -m "chore: standardize @claude / lint / retire newspaper (via tommyroar/.github sync)"
+        git commit -q -m "chore: standardize @claude / PR gates / lint (via tommyroar/.github sync)"
         git push -q -u --force origin "$BRANCH"
         gh pr view "$BRANCH" >/dev/null 2>&1 && { echo "  (PR already open)"; } || \
-        gh pr create --head "$BRANCH" --title "Standardize: @claude + lint + retire newspaper" \
-          --body "Automated sync from tommyroar/.github. Canonical @claude workflow, pre-commit/ruff for Python, newspaper removed. 🤖 Generated with Claude Code" || true
+        gh pr create --head "$BRANCH" --title "Standardize: @claude + PR description gates + lint" \
+          --body "Automated sync from tommyroar/.github. Canonical @claude workflow, the hard pr-structure-gate + agentic pr-style-review PR-description gates, pre-commit/ruff for Python, old newspaper workflow removed. 🤖 Generated with Claude Code" || true
       fi
     )
     rm -rf "$tmp"

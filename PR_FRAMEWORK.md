@@ -1,8 +1,10 @@
 # PR Framework — the "Newspaper / Information-Pyramid" PR description
 
 > Canonical reference for **any agent** writing a GitHub pull-request description in
-> Tommy's workspaces. Read this before composing a PR body, then validate the body
-> with `validate_pr.py` (next to this file) before opening or updating the PR.
+> Tommy's workspaces. Read this before composing a PR body. Two CI gates then check
+> what you wrote (see **Enforcement** at the bottom): a **hard structure gate** that
+> blocks on a missing template spine, and a **flexible style review** that judges
+> length/voice/diagrams and links related issues.
 
 ## The one rule
 
@@ -68,19 +70,21 @@ PR reads the same way.
 
 ## The iPad-mini length budget (tiered)
 
-GitHub does not paginate, so length is a **rendered-height budget**, enforced by
-`validate_pr.py` (≈ **1000px** usable height per page, ≈ **80 chars/line**):
+GitHub does not paginate, so length is a **rendered-height budget** (≈ **1000px**
+usable height per page, ≈ **80 chars/line**). This is a *soft* rule — the hard
+structure gate ignores it; the **`pr-style-review` agent** judges it with the tiers
+below (see **Enforcement**):
 
 - **Default: up to 2 pages** at a comfortable density. 1–2 pages is the target — don't
-  pad to fill, don't cram past it. The validator FAILs above the budget.
+  pad to fill, don't cram past it. The style review flags padding above the budget.
 - **Complex changes: up to 4 pages**, with **2× the rewrite token budget**.
 - **Complexity is measured on non-prose churn only.** Pure text/docs edits — `.md`,
   `.markdown`, `.mdx`, `.txt`, `.rst`, `.org`, `.adoc`, including **Obsidian-vault
   PRs** — do **not** count toward complexity. So a big docs/vault PR stays at the
   2-page default and is kept tight; only substantial *code/structural* change
   (> ~400 non-prose lines or > ~15 non-prose files) unlocks the 4-page tier.
-- The tier is decided by the on-push worker from the diff and passed to the validator
-  as `--max-pages` (env `PR_NEWSPAPER_MAX_PAGES`); manual runs default to 2.
+- The reviewer infers the tier from the diff ("complex topic → allow double length");
+  when in doubt it defaults to the 2-page budget.
 
 ## Authoring checklist
 
@@ -92,7 +96,8 @@ GitHub does not paginate, so length is a **rendered-height budget**, enforced by
 - [ ] New/changed flows shown as mermaid (or an explicit "no flow change" note).
 - [ ] No heading-level skips (don't jump `#` → `###`).
 - [ ] Paragraphs short; no wall-of-text blocks.
-- [ ] `validate_pr.py` passes within the page budget (2 default; 4 for complex code).
+- [ ] Structure gate passes (spine present); length sits within the page budget
+      (2 default; 4 for complex code) so the style review stays happy.
 
 ## Template
 
@@ -143,8 +148,8 @@ flowchart TD
 ## Rebuild policy — the newspaper is always regenerated, never patched
 
 The description is a living front page: it is **rebuilt from scratch**, never appended
-to. Two triggers force a full rebuild (`gh pr edit <n> --body-file …` + re-run
-`validate_pr.py`):
+to. Two triggers force a full rebuild (`gh pr edit <n> --body-file …`; editing the body
+re-runs both gates automatically):
 
 1. **Every commit pushed to the PR branch.** After any push that adds commits to an
    open PR, regenerate the entire newspaper from the *current full diff* (`base...head`),
@@ -162,14 +167,45 @@ patched by accretion. After a force-push/rebase, regenerate the same way.
 body, validates it, and edits the PR. Wire it into your push flow (e.g. a `pre-push`
 hook or `/dev` deploy step) so the refresh is automatic.
 
-## Usage
+## Enforcement — two gates, split by what each is good at
+
+The framework is checked in CI by **two** workflows (canonical copies live in
+`tommyroar/.github/.github/workflow-templates/`, synced into every owned repo by
+`scripts/sync.sh`). They replace the retired monolithic `pr-newspaper` validator,
+which failed on structure *and* subjective length/style at once and churned.
+
+1. **`pr-structure-gate.yml` — the hard, enforceable CI gate.** A deterministic
+   regex check on the PR body. It BLOCKS the merge when the required newspaper
+   **spine** is missing, and checks *only objective structure* so it never churns:
+   - exactly one `#` headline (a short kicker line above it is allowed);
+   - an italic `> _dek_` standfirst (or an explicit `> **TL;DR**`);
+   - a `> [!NOTE]` masthead strip;
+   - no heading-level skips (`#` → `###`);
+   - alt text on every image;
+   - no unfilled template placeholders (`<AREA>`, `<Dek: …>`, `closes #000`, …).
+   It does **not** judge length, voice, or diagram quality — that's the other gate.
+   Bypass on an exceptional PR with the `skip-structure-gate` label; make it a
+   *required* check in branch protection to truly block.
+
+2. **`pr-style-review.yml` — the flexible, agentic gate.** Runs the *soft* rules
+   through Claude Code Action and posts one **advisory** (non-blocking) comment:
+   - **length with judgment** — ~2 pages by default, but up to ~4 ("double length")
+     for genuinely complex *code* changes; flags padding and buried ledes;
+   - **Wired voice** and pyramid order;
+   - **diagram sense** — checks each mermaid block actually matches the diff and
+     isn't horizontal (e.g. flags *"that diagram doesn't make sense"*);
+   - **related issues** — searches open/draft issues and attaches clear matches to
+     the PR (`Related: #N` / `Closes #N`) with a comment.
+   Bypass with the `skip-style-review` label.
+
+## Usage — local pre-flight
+
+You can still dry-run structure locally before opening the PR:
 
 ```sh
-# Write the body to a file, then:
-python3 ~/.claude/pr-framework/validate_pr.py path/to/pr-body.md
-# or pipe:
-cat pr-body.md | python3 ~/.claude/pr-framework/validate_pr.py -
-# Then open / rebuild the PR:
+# Write the body to a file, then open / rebuild the PR:
 gh pr create  --body-file pr-body.md
 gh pr edit N  --body-file pr-body.md   # feedback → full rebuild, not a comment
 ```
+
+Once opened, the two gates run automatically on every `opened`/`edited` of the PR.

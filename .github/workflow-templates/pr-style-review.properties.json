@@ -1,0 +1,6 @@
+{
+  "name": "PR Style Review",
+  "description": "Agentic, non-blocking length/style/diagram reviewer for the newspaper PR framework. Judges length (double for complex code), sanity-checks mermaid, links related issues. Uses CLAUDE_CODE_OAUTH_TOKEN.",
+  "iconName": "octicon-comment-discussion",
+  "categories": ["Automation", "Code Review"]
+}

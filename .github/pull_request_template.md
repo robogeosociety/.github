@@ -5,9 +5,11 @@
   facts first, supporting detail below, fine print last.
 
   Full rules + voice: github.com/tommyroar/.github/blob/main/PR_FRAMEWORK.md
-  This is a house convention, NOT CI-enforced — the `pr-newspaper` validation
-  workflow was retired (it caused churn). An agent that opens/updates a PR
-  regenerates the body from the *full* diff; rebuilt from scratch, never appended to.
+  Two gates check this body: `pr-structure-gate` (a hard CI check — one H1, an
+  italic dek, a `> [!NOTE]` masthead, alt text, no heading skips; it BLOCKS if the
+  spine is missing) and `pr-style-review` (an agentic, non-blocking length/style/
+  diagram reviewer). An agent that opens/updates a PR regenerates the body from the
+  *full* diff; rebuilt from scratch, never appended to.
 
   Fill the panel below and DELETE any section that is genuinely empty (don't leave
   empty headers, and don't pad to fill the budget).

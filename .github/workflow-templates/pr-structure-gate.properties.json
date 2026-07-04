@@ -1,0 +1,6 @@
+{
+  "name": "PR Structure Gate",
+  "description": "Hard, deterministic CI gate that blocks PR descriptions missing the required newspaper-template markdown structure (headline, dek, masthead, alt text). Self-contained; no secrets.",
+  "iconName": "octicon-checklist",
+  "categories": ["Automation", "Code Review"]
+}
