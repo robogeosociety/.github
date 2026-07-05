@@ -1,0 +1,6 @@
+{
+  "name": "Awaiting Your Action",
+  "description": "Assigns you and posts a sticky 'waiting on you' comment when an issue or PR is labeled human-task or blocked, then clears it when the label is removed. GitHub-native; no secrets.",
+  "iconName": "octicon-bell",
+  "categories": ["Automation", "Notifications"]
+}

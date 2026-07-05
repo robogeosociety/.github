@@ -12,6 +12,8 @@ portrait display. Full rules + voice: [`PR_FRAMEWORK.md`](PR_FRAMEWORK.md).
   CI gate on the PR description (below).
 - **`.github/workflow-templates/pr-style-review.yml`** — the flexible, agentic
   length/style gate (below).
+- **`.github/workflow-templates/awaiting-your-action.yml`** — turns the `human-task`
+  / `blocked` labels into a personal work queue (below).
 
 ## Two gates, one framework
 The old monolithic `pr-newspaper` validator failed on *everything* — structure **and**
@@ -31,6 +33,15 @@ The style review reuses the `CLAUDE_CODE_OAUTH_TOKEN` secret sync already sets.
 `skip-style-review` to skip the agentic one; bot authors (dependabot) are skipped
 automatically. To make the structure gate a *required* check, mark it required in each
 repo's branch-protection rules.
+
+## Waiting-on-you queue — labels that ping you
+`awaiting-your-action.yml` makes the `human-task` and `blocked` labels *actionable*.
+Add either to an **issue or PR** and it assigns the item to you and posts a sticky
+**⏳ Waiting on you** comment — so GitHub's own email + mobile notifications fire.
+Remove the last such label and it un-assigns and flips the note to **✅ Cleared**.
+One ping per state change, GitHub-native (no webhook, no secret), synced to every repo
+by [`scripts/sync.sh`](scripts/sync.sh) alongside the gates. Your standing queue is then
+just the GitHub search `assignee:@me label:human-task,blocked`.
 
 ## Generation vs enforcement
 Generation happens **once**, by the agent that opens/updates a PR (it writes the body

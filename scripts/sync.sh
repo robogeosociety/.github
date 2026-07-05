@@ -24,6 +24,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_SRC="$ROOT/.github/workflow-templates/claude.yml"
 STRUCTURE_SRC="$ROOT/.github/workflow-templates/pr-structure-gate.yml"
 STYLE_SRC="$ROOT/.github/workflow-templates/pr-style-review.yml"
+AWAIT_SRC="$ROOT/.github/workflow-templates/awaiting-your-action.yml"
 PRECOMMIT_SRC="$ROOT/standard/.pre-commit-config.yaml"
 LINT_SRC="$ROOT/standard/workflows/lint.yml"
 BRANCH="chore/standardize-sync"
@@ -97,6 +98,14 @@ for full in $repos; do
     echo "  pr-style-review.yml   : MISSING -> add"
   fi
   changes+=("put:.github/workflows/pr-style-review.yml:$STYLE_SRC")
+
+  # Label-driven "waiting on you" queue (human-task / blocked -> assign + notify).
+  if api_exists "$r" ".github/workflows/awaiting-your-action.yml"; then
+    echo "  awaiting-your-action.yml : present (refresh to canonical)"
+  else
+    echo "  awaiting-your-action.yml : MISSING -> add"
+  fi
+  changes+=("put:.github/workflows/awaiting-your-action.yml:$AWAIT_SRC")
 
   if api_exists "$r" ".github/workflows/pr-newspaper.yml"; then
     echo "  pr-newspaper.yml : present -> REMOVE"
