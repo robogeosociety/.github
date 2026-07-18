@@ -1,0 +1,28 @@
+# labels.tsv — the canonical org-wide label taxonomy for robogeosociety.
+# Source of truth. `scripts/labels.sh` reconciles every owned repo to this set
+# (create missing, fix drifted color/description). Additive by default: it never
+# deletes a repo's bespoke labels unless run with --prune-stock (removes only the
+# nine untouched GitHub default labels).
+#
+# Format: three TAB-separated columns — name<TAB>color(no #)<TAB>description
+# Blank lines and lines starting with # are ignored. Group headers are # comments.
+#
+# ── Issue / task system ────────────────────────────────────────────────────────
+# The gh-task-human / gh-task-machine workflow (migrated off the Obsidian board
+# 2026-07-04). Every issue is a human task or a machine task; `parked` shelves it.
+human-task	D93F0B	Needs Tommy's hands — operator runbook (gh-task-human)
+machine-task	0E8A16	Agent/automation work — did or will do (gh-task-machine)
+parked	BFD4F2	Deliberately shelved — revisit before acting
+#
+# ── Proposal + merge lane ──────────────────────────────────────────────────────
+# `proposal` renders an open PR's docs as a draft-banded dev-wiki preview before
+# merge. `automerge` merges once every check is green; `blocked` holds it.
+proposal	5319E7	Render this open PR's docs as a draft-banded preview on the dev wiki (proposals lane)
+automerge	0E8A16	Merged automatically once every check is green (automerge.yml)
+blocked	B60205	Holds auto-merge (blocking-comments gate)
+#
+# ── PR-description gate bypasses ────────────────────────────────────────────────
+# Escape hatches named in PR_FRAMEWORK.md for the two CI gates. Provisioning them
+# here makes the documented bypass actually applicable in every repo.
+skip-structure-gate	5319E7	Bypass the hard pr-structure-gate on this PR
+skip-style-review	5319E7	Bypass the agentic pr-style-review on this PR
