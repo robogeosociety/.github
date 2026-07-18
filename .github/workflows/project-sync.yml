@@ -1,0 +1,36 @@
+name: Project sync
+
+# Keeps the org master board (Projects v2 #7 "the board") honest: adds newly-opened PRs/issues
+# and columns everything by content-state — issue -> Ideas, ready PR -> Proposals, draft PR ->
+# Drafts, merged/closed -> Done. Reconcile-only for other owned boards.
+#
+# Needs a token with `project` scope — the default GITHUB_TOKEN cannot write org Projects v2.
+# Set the PROJECT_SYNC_TOKEN secret (fine-grained PAT / App token; see
+# robogeosociety/robot-geographical-society#162).
+
+on:
+  schedule:
+    - cron: "17 * * * *" # hourly, off the top of the hour
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report changes without writing.
+        type: boolean
+        default: false
+
+concurrency:
+  group: project-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconcile board #7 (+ capture open work)
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+        run: |
+          python3 scripts/project_sync.py \
+            --owner robogeosociety --project 7 --capture-open \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
