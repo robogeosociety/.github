@@ -51,12 +51,13 @@ above then check what was written — the hard gate deterministically, the style
 with judgment.
 
 ## Fleet automation — one scheduler manages every repo
-Standardization doesn't wait for a human to remember to run it. The `fleet-sync.yml`
+Standardization doesn't wait for a human to remember to run it. The
+[`repo-sync.yml`](https://github.com/robogeosociety/supervisor/blob/main/.github/workflows/repo-sync.yml)
 workflow — hosted in the private `supervisor` repo since the org runner group refuses
 public repos, checking this repo out for the canonical files + scripts — is the CI/CD
 that keeps the whole fleet in compliance, running on the **self-hosted runner on the
-Mac mini** (a container with the `/Volumes/dev` checkout root mounted). Weekly — and
-on demand — it:
+Mac mini** (a container with the `/Volumes/dev` checkout root mounted). Weekly
+(Mondays 07:17 UTC) — and on demand — it:
 
 1. **Mirrors** every owned repo into `/Volumes/dev` via
    [`scripts/repo-sync.sh`](scripts/repo-sync.sh) (clone missing, `git fetch --prune`
@@ -75,9 +76,38 @@ The canonical label set spans the three org-wide workflows: the **issue/task sys
 (`human-task`, `machine-task`, `parked`), the **proposal + merge lane** (`proposal`,
 `automerge`, and the `blocked` guard), and the **PR-gate bypasses** the framework
 documents (`skip-structure-gate`, `skip-style-review`). Edit
-`labels.tsv` to change the taxonomy; the next fleet-sync propagates it.
+`labels.tsv` to change the taxonomy; the next repo-sync propagates it.
 
 Scheduled runs apply automatically (new repos self-heal into compliance); manual
 `workflow_dispatch` runs default to a read-only dry-run. See the header of
-`fleet-sync.yml` for the one-time runner setup (labels, the `/Volumes/dev` mount, and
+`repo-sync.yml` for the one-time runner setup (labels, the `/Volumes/dev` mount, and
 `gh` / `CLAUDE_CODE_OAUTH_TOKEN` auth).
+
+## Board automation — the org master board keeps itself honest
+[`project-sync.yml`](.github/workflows/project-sync.yml) runs hourly (`:17`) on a
+hosted runner and reconciles **Projects v2 #7 "the board"** via
+[`scripts/project_sync.py`](scripts/project_sync.py): it adds open issues/PRs across
+the org that aren't on the board yet, then columns every item by content-state —
+issue → *Ideas*, ready PR → *Proposals*, draft PR → *Drafts*, merged/closed → *Done*.
+Writing org Projects v2 needs `project` scope, which `GITHUB_TOKEN` doesn't have, so
+the workflow uses the `PROJECT_SYNC_TOKEN` secret.
+
+Your personal "what's on me" queue is **not** a board — it's the label-driven
+[waiting-on-you queue](#waiting-on-you-queue--labels-that-ping-you) above, i.e. the
+search `assignee:@me label:human-task,blocked`.
+
+## Actions is the single rail — no mini cron or launchd twins
+Both loops above once had a hand-rolled twin on the Mac mini. Stopping a job is not
+retiring it (the lesson from `robogeosociety/discobots#74` — the bots kept coming back
+because nobody told the roster they were gone), so the mini rows were **deleted**, not
+just unloaded, on 2026-07-25 (`robogeosociety/robot-geographical-society#175`):
+
+| Retired mini job | Replaced by | Why it was safe |
+| --- | --- | --- |
+| crontab `repo-sync.sh --apply`, daily 04:30 | `supervisor` → `repo-sync.yml` | Byte-identical script, same `/Volumes/dev` target, same host — and the workflow also runs `sync.sh` + `labels.sh`, so it's a strict superset. |
+| launchd `com.tommyroar.gh-board-sync`, every 30 min | `project-sync.yml` | It pushed issues into user project `tommyroar/3`, a board that has been **closed** since the org migration. The live board is org #7. |
+
+If you find yourself adding a scheduled job to the mini, check first whether it belongs
+in Actions — hosted for anything that only talks to the GitHub API, or the `mini-fleet`
+self-hosted runner when it genuinely has to touch the host. Either way you get logs,
+retries and run history for free, and the roster stays true.
