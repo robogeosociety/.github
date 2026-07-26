@@ -14,6 +14,14 @@ human-task	D93F0B	Needs Tommy's hands — operator runbook (gh-task-human)
 machine-task	0E8A16	Agent/automation work — did or will do (gh-task-machine)
 parked	BFD4F2	Deliberately shelved — revisit before acting
 #
+# ── Failure classes worth naming ───────────────────────────────────────────────
+# `host-drift` marks the recurring shape where host state silently diverges from
+# what the code assumes — TCC/FDA grants pinned to versioned binary paths, launchd
+# agents that stop being loaded, `brew upgrade` moving a granted binary. It fails
+# quietly (Operation not permitted, or a hang), so it gets rediagnosed from scratch
+# each time. Label it and the pattern becomes searchable instead of folkloric.
+host-drift	FBCA04	Host state silently self-revokes on update (TCC grants, launchd, versioned paths)
+#
 # ── Proposal + merge lane ──────────────────────────────────────────────────────
 # `proposal` renders an open PR's docs as a draft-banded dev-wiki preview before
 # merge. `automerge` merges once every check is green; `blocked` holds it.
