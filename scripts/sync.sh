@@ -152,4 +152,11 @@ for full in $repos; do
 done
 
 echo; echo "== done [$MODE] =="
-[ $APPLY = 0 ] && echo "Re-run with --apply (and CLAUDE_CODE_OAUTH_TOKEN exported) to set secrets and open PRs."
+if [ $APPLY = 0 ]; then
+  echo "Re-run with --apply (and CLAUDE_CODE_OAUTH_TOKEN exported) to set secrets and open PRs."
+fi
+# Last line's exit status becomes the script's own — with `[ $APPLY = 0 ] && echo ...`
+# a false test (i.e. every --apply run) left the script exiting 1 even when every repo
+# applied cleanly. An `if` with no `else` always resolves to 0, so real work no longer
+# reports as failure. See scripts/labels.sh for the same footgun.
+exit 0
