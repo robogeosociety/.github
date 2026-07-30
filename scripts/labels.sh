@@ -106,4 +106,9 @@ for full in $repos; do
 done
 
 echo; echo "== done [$MODE] =="
-[ $APPLY = 0 ] && echo "Re-run with --apply to create/fix labels (add --prune-stock to drop unused GitHub defaults)."
+if [ $APPLY = 0 ]; then
+  echo "Re-run with --apply to create/fix labels (add --prune-stock to drop unused GitHub defaults)."
+fi
+# Same footgun as scripts/sync.sh: `[ $APPLY = 0 ] && echo ...` as the last line left
+# the script exiting 1 on every real --apply run. `if`/no-`else` always resolves 0.
+exit 0
