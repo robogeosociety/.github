@@ -1,0 +1,106 @@
+# Reusable failure notifier — the org's answer to a scheduled lane dying quietly.
+#
+# Why this exists: on 2026-07-30 a survey found 10 of 14 scheduled/dispatch lanes across
+# the org had NO failure notification of any kind, including every `deploy-exec` lane —
+# so an approved deploy could fail and nothing would say so. The one lane that did have a
+# notifier guarded it with `if: failure()`, which never fires on a timeout kill.
+#
+# The load-bearing detail, learned the hard way: a `timeout-minutes` kill concludes as
+# **cancelled**, not **failure**. Callers must therefore guard with
+# `if: failure() || cancelled()`. Two real incidents were silent for exactly this reason
+# (discobots/eval-weekly at 45m11s vs a 45m budget; obsidian-automations/deploy-exec at
+# 15m04s vs 15m).
+#
+# Usage — add to any workflow with a scheduled or dispatched trigger:
+#
+#   notify-failure:
+#     needs: [the-job-that-matters]        # list every job you want covered
+#     if: failure() || cancelled()
+#     uses: robogeosociety/.github/.github/workflows/notify-failure.yml@main
+#     with:
+#       lane: deploy-exec
+#     secrets: inherit                     # NOTIFY_SECRET is an org secret, visibility=all
+#
+# CAVEAT worth reading before you copy it: `cancelled()` also fires when a human cancels a
+# run, and when a `concurrency` group with `cancel-in-progress: true` supersedes one. On a
+# lane with that setting you will get notified for routine supersession. Either accept the
+# noise deliberately or leave the guard at `failure()` — do not add this and then learn to
+# ignore it, which is how a channel stops being read.
+
+name: notify-failure (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        description: "Human name of the lane, e.g. deploy-exec. Appears in the #dev title."
+        type: string
+        required: true
+      level:
+        description: 'Severity for the Worker: error | warn | info.'
+        type: string
+        required: false
+        default: error
+    secrets:
+      NOTIFY_SECRET:
+        description: "HMAC key for deploy-gate's /notify lane. Org secret, visibility=all."
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Deliberately NOT the self-hosted mini runner: the most likely reason a lane just died
+    # is that the mini is unwell, and a notifier that shares its fate reports nothing.
+    timeout-minutes: 5
+    steps:
+      - name: Post the failure to #dev
+        env:
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          LANE: ${{ inputs.lane }}
+          LEVEL: ${{ inputs.level }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, hmac, json, os, sys, urllib.request
+
+          # Same contract as discobots/ops/notify_ci.py: HMAC-SHA256 over the raw JSON body,
+          # sent as `x-request-signature: sha256=<hex>`. Inlined rather than shared because a
+          # reusable workflow cannot check out another repo's helper without a token.
+          gate = os.environ.get("GATE_URL", "https://deploy-gate.tommy-b-doerr.workers.dev")
+          secret = os.environ["NOTIFY_SECRET"]
+          if not secret:
+              print("::error::NOTIFY_SECRET is empty — the notice cannot be signed", file=sys.stderr)
+              sys.exit(1)
+
+          lane, repo = os.environ["LANE"], os.environ["REPO"]
+          payload = {
+              "title": f"{repo} · {lane} failed",
+              # The run URL is the whole point — a notice you cannot click is a notice you
+              # will not act on.
+              "body": (
+                  f"`{lane}` did not complete on `{os.environ['REF']}` "
+                  f"(trigger: {os.environ['EVENT']}).\n{os.environ['RUN_URL']}\n\n"
+                  "If the job hit its `timeout-minutes`, GitHub reports it as **cancelled** "
+                  "rather than failed — check the step duration against the budget."
+              ),
+              "level": os.environ.get("LEVEL") or "error",
+          }
+          body = json.dumps(payload).encode()
+          sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+          req = urllib.request.Request(
+              f"{gate}/notify",
+              method="POST",
+              data=body,
+              headers={
+                  "content-type": "application/json",
+                  "x-request-signature": f"sha256={sig}",
+                  "user-agent": "notify-failure-reusable/1.0",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=30) as res:
+              res.read()
+          print(f"[notify-failure] posted: {payload['title']}")
+          PY
