@@ -170,6 +170,29 @@ def priority_of(item: dict) -> str | None:
 # ── the report ───────────────────────────────────────────────────────────────
 
 
+def visibility() -> dict:
+    """What this token can actually see, versus what the org contains.
+
+    The first CI run reported 17 open PRs and 134 open issues; an org-admin token
+    saw 50 and 191 at the same moment. PROJECT_SYNC_TOKEN is a PAT, and a PAT only
+    reaches repositories it was granted — so two thirds of open PRs were missing
+    from a report that gave no hint anything was missing.
+
+    A report that undercounts silently is the failure mode this whole job exists to
+    avoid, so the numbers are compared and the shortfall is stated in the report
+    rather than left for someone to notice.
+    """
+    try:
+        repos = gql(
+            """query($org:String!){ organization(login:$org){
+                 repositories(first:100){ totalCount nodes{ name } } } }""",
+            org=ORG,
+        )["organization"]["repositories"]
+        return {"repos_visible": len(repos["nodes"]), "repos_total": repos["totalCount"]}
+    except RuntimeError as err:
+        return {"error": str(err)[:200]}
+
+
 def find_stale(policy: dict) -> dict:
     """Items nobody has touched. Reported only — never closed, labelled or nudged."""
     s = policy["staleness"]
@@ -564,7 +587,9 @@ def link(item: dict) -> str:
     return f"[{item['repository']['name']}#{item['number']}]({item['url']})"
 
 
-def render(stale: dict, wip: list, gaps: dict, ranked: list, writes: dict) -> tuple[str, list]:
+def render(
+    stale: dict, wip: list, gaps: dict, ranked: list, writes: dict, vis: dict | None = None
+) -> tuple[str, list]:
     """A short card and the thread body, split into Discord-sized parts.
 
     Split here rather than in the Worker: this code knows where a section ends, and
@@ -578,6 +603,16 @@ def render(stale: dict, wip: list, gaps: dict, ranked: list, writes: dict) -> tu
     )
 
     sections = []
+
+    # Stated first, because everything below it is wrong if the token is partial.
+    if vis and vis.get("repos_total") and vis["repos_visible"] < vis["repos_total"]:
+        missing = vis["repos_total"] - vis["repos_visible"]
+        sections.append(
+            f"⚠️ **This report is incomplete.** The token can see "
+            f"{vis['repos_visible']} of {vis['repos_total']} repositories — every count "
+            f"below excludes {missing}. Grant PROJECT_SYNC_TOKEN access to the rest, or "
+            "the review will keep understating the backlog."
+        )
 
     if stale["prs"]:
         rows = [
@@ -739,7 +774,7 @@ def main() -> int:
 
     writes = write_priorities(projects, {r["key"]: r["priority"] for r in ranked}, args.apply)
 
-    card, parts = render(stale, wip, gaps, ranked, writes)
+    card, parts = render(stale, wip, gaps, ranked, writes, visibility())
     print(card)
     for p in parts:
         print("\n" + p)

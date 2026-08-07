@@ -261,3 +261,30 @@ def test_the_write_note_distinguishes_dry_run_from_applied():
     assert "Would set (dry run)" in dry[-1]
     _, live = pr.render(EMPTY_STALE, [], {}, [], {"changed": [{"key": "a#1"}], "applied": True})
     assert "Set Priority" in live[-1]
+
+
+# ── the token's own blind spot ───────────────────────────────────────────────
+
+
+def test_a_partial_token_is_declared_before_any_count():
+    """The first CI run reported 17 open PRs; an admin token saw 50 at the same
+    moment. PROJECT_SYNC_TOKEN is a PAT and only reaches repos it was granted, so
+    two thirds of open PRs were missing from a report that looked complete.
+
+    A silent undercount is the exact failure this job exists to prevent, so the
+    warning goes FIRST — everything after it is wrong by the same factor.
+    """
+    _, parts = pr.render(EMPTY_STALE, [], {}, [], {}, {"repos_visible": 12, "repos_total": 31})
+    assert "incomplete" in parts[0].lower()
+    assert "12 of 31" in parts[0]
+
+
+def test_full_visibility_says_nothing():
+    _, parts = pr.render(EMPTY_STALE, [], {}, [], {}, {"repos_visible": 31, "repos_total": 31})
+    assert "incomplete" not in " ".join(parts).lower()
+
+
+def test_an_unknown_visibility_is_not_reported_as_a_problem():
+    # A failed probe must not print a scary banner built from missing numbers.
+    _, parts = pr.render(EMPTY_STALE, [], {}, [], {}, {"error": "boom"})
+    assert "incomplete" not in " ".join(parts).lower()
