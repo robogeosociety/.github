@@ -1,0 +1,106 @@
+# project-policy — WIP limits, staleness thresholds and board hygiene for the org.
+#
+# WIP limits live here because GitHub Projects has no concept of one. There is no
+# field type that means "limit", no column cap, and nothing that warns when a
+# status column fills up. So the limit is a number in this file and the weekly
+# project-review job reports breaches; nothing enforces it at write time, and
+# nothing ever moves a card on its own.
+#
+# Read by robogeosociety/discobots → ops/project_review.py (weekly, Mondays).
+#
+# WHY A FILE AND NOT A PROJECT FIELD: nine projects would each need the field
+# created and maintained by hand, drift between them would be invisible, and a
+# change would leave no trace. Here it is one PR with a diff and a reviewer.
+#
+# ── the numbers below are a starting point, not a measurement ────────────────
+# Surveyed 2026-08-07: 191 open issues, 49 open PRs (17 draft), and NOTHING in the
+# org older than 30 days by last-update — a stock 60/90-day stale bot would have
+# reported an empty list every week. The limits are set near current occupancy so
+# the first report is informative rather than a wall of red. Tighten them once
+# there is a habit of clearing the board.
+
+version: 1
+
+staleness:
+  # Days without an update before an item is reported. Non-mutating throughout:
+  # the job never closes, labels or comments on anything it finds.
+  pull_request_days: 14
+  issue_days: 30
+  # Drafts are work in progress by definition, and 17 of 49 open PRs are drafts.
+  # Counting them as stale would make the report mostly noise on the first run.
+  include_draft_prs: false
+  # A PR whose checks are red is stale in a different sense — it is blocked, not
+  # forgotten — so it is reported under its own heading rather than by age.
+  report_failing_checks: true
+
+# Per-project WIP limits, keyed by the Projects v2 NUMBER (stable; titles are not).
+# `limits` maps a Status option name to the most items that column should hold.
+# Columns not listed are unlimited. A project not listed here is reported as
+# "no policy" rather than silently skipped — an unmanaged board is the gap.
+projects:
+  - number: 7
+    name: the board
+    # 353 items and, until now, no Priority field — the main board could not be
+    # prioritised at all. Its Status vocabulary is also unique in the org
+    # (Ideas/Proposals/Drafts/Done rather than Todo/In Progress/Done), which is
+    # deliberate: it tracks a proposal lifecycle, not execution.
+    limits:
+      Proposals: 12
+      Drafts: 8
+    # Done items pile up forever and drown the board view. Reported, never moved.
+    archive_done_after_days: 30
+
+  - number: 3
+    name: tommybots
+    limits:
+      Ready: 8
+      In progress: 3
+      In review: 5
+
+  - number: 1
+    name: CICD life
+    limits:
+      In Progress: 5
+
+  - number: 4
+    name: infra
+    limits:
+      Ready: 6
+      In progress: 3
+      In review: 4
+
+  - number: 2
+    name: automations
+    limits:
+      In Progress: 4
+
+  - number: 9
+    name: blender
+    limits:
+      In Progress: 3
+
+  - number: 8
+    name: References
+    # A reference shelf, not a work queue: items sit here on purpose and a WIP
+    # limit would report a breach every week for a board that is behaving.
+    limits: {}
+    wip_exempt: true
+
+# Projects that exist but hold nothing. Listed so the report can say "still empty"
+# once and then stop, rather than rediscovering them every Monday. Delete the
+# project or delete the entry.
+dormant:
+  - number: 5
+    name: "@tommyroar's untitled template"
+    note: 0 items since creation — an unrenamed template, probably deletable
+  - number: 6
+    name: campsite ingest
+    note: 0 items — work happened, but never on this board
+
+coverage:
+  # Open work on no project at all. Sampled 2026-08-07: 27 of 100 issues and 23 of
+  # 49 PRs were orphans, concentrated in obsidian-automations (11), discobots (5),
+  # infra (4), supervisor (4), cloudflare-tfvend (3).
+  report_unboarded: true
+  # Repos whose issues are deliberately not tracked on a board.
+  exempt_repos: []
