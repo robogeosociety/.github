@@ -1,0 +1,66 @@
+name: project-review
+
+# The weekly read of the org: what has gone stale, what is over WIP, what to do
+# next. Replaces the wiki-staleness wall of text that used to land in #dev.
+#
+# Lives HERE rather than in discobots, the usual home for Discord bots, because
+# this is the only repo holding PROJECT_SYNC_TOKEN — a PAT with `project` scope,
+# which the default GITHUB_TOKEN does not have and cannot be granted. Copying that
+# PAT to the org so the job could live elsewhere would widen a credential's blast
+# radius to every repo, to save moving one file. The policy file is here too.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC — before the week's work is chosen, not after.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write Priority to the boards (unchecked = report only)"
+        type: boolean
+        default: false
+      post:
+        description: "Post to #dev"
+        type: boolean
+        default: true
+
+concurrency:
+  group: project-review
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Claude Code
+        run: curl -fsSL https://claude.ai/install.sh | bash
+
+      - name: Review
+        env:
+          # `project` scope. GITHUB_TOKEN cannot read or write org Projects v2 at
+          # all, so without this the job sees no boards.
+          GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          # The scheduled run writes; a manual run defaults to reporting only, so
+          # `workflow_dispatch` is a safe way to see what it would do.
+          APPLY=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then
+            APPLY="--apply"
+          fi
+          POST=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.post }}" = "true" ]; then
+            POST="--post"
+          fi
+          uv run --with pyyaml python ops/project_review.py $APPLY $POST
+
+      - name: Unit tests
+        run: uv run --with pyyaml --with pytest pytest ops/tests -q
