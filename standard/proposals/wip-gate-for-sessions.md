@@ -1,6 +1,6 @@
 # Proposal — a WIP gate for Claude sessions
 
-**Status:** draft · **Depends on:** `standard/project-policy.yml`, `ops/project_review.py`
+**Status:** accepted, unbuilt · **Depends on:** `standard/project-policy.yml`, `ops/project_review.py`
 
 Make a Claude session declare which project it is working on, and make starting new
 work in an already-overloaded workstream a deliberate act rather than an accident.
@@ -24,6 +24,10 @@ moment the answer is cheap — before the work starts.
 
 ---
 
+> **Decided 2026-08-08 — SessionStart prompt + CI enforcement.** The disagreement
+> below was put to Tommy and the recommendation was taken: no pre-commit hook. The
+> three open questions at the foot of this document are still open.
+
 ## Disagreement with the literal ask, stated up front
 
 The request was for a **pre-commit hook**. I do not think pre-commit should be the
@@ -45,6 +49,11 @@ route around it.
 makes choosing a project the path of least resistance while it is still free; CI is
 what makes it true. Pre-commit adds a third place to maintain the same rule and
 catches nothing the other two miss.
+
+*Accepted 2026-08-08.* The gap this knowingly leaves: a commit made without a
+session declaration reaches CI before anything objects. That is the cost of having
+no pre-commit hook, and it is deliberate — CI still refuses the PR, so the work is
+caught before it **merges** rather than before it is **written**.
 
 ---
 
