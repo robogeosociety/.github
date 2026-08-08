@@ -1,0 +1,6 @@
+{
+  "name": "Copilot Coding Agent",
+  "description": "Responds to @copilot mentions and assigned issues. Uses built-in GITHUB_TOKEN — no extra secret required.",
+  "iconName": "octicon-copilot",
+  "categories": ["Automation"]
+}

@@ -4,15 +4,15 @@
 # Source of truth: robogeosociety/.github.
 #
 #   ./scripts/sync.sh            # DRY-RUN (read-only): print the per-repo delta
-#   CLAUDE_CODE_OAUTH_TOKEN=... ./scripts/sync.sh --apply   # set secrets + open PRs
+#   ./scripts/sync.sh --apply   # open PRs to standardize repos
 #
 # Idempotent. Safe to re-run (weekly cron) so new repos self-heal into compliance.
 # What it does per owned, non-fork, non-archived repo:
-#   1. ensure the CLAUDE_CODE_OAUTH_TOKEN Actions secret is set
-#   2. install/refresh .github/workflows/claude.yml            (canonical @claude)
-#   3. install/refresh .github/workflows/pr-structure-gate.yml (hard PR-desc gate)
-#   4. install/refresh .github/workflows/pr-style-review.yml   (agentic style gate)
-#   5. remove .github/workflows/pr-newspaper.yml               (old newspaper retired)
+#   1. install/refresh .github/workflows/copilot.yml            (native @copilot agent)
+#   2. install/refresh .github/workflows/pr-structure-gate.yml  (hard PR-desc gate)
+#   3. install/refresh .github/workflows/pr-style-review.yml    (agentic style gate via Models API)
+#   4. remove .github/workflows/claude.yml                      (old Claude responder retired)
+#   5. remove .github/workflows/pr-newspaper.yml                (old newspaper retired)
 #   6. Python repos: install .pre-commit-config.yaml, and lint.yml if ruff isn't already in CI
 # File changes land on a branch + PR (never pushed straight to main).
 set -euo pipefail
@@ -21,9 +21,9 @@ ORG=robogeosociety
 # Kept user-owned in the 2026-07 org migration; still part of the standardized fleet.
 EXTRA_REPOS='tommyroar/tommyroar.github.io'
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLAUDE_SRC="$ROOT/.github/workflow-templates/claude.yml"
+COPILOT_SRC="$ROOT/.github/workflow-templates/copilot.yml"
 STRUCTURE_SRC="$ROOT/.github/workflow-templates/pr-structure-gate.yml"
-STYLE_SRC="$ROOT/.github/workflow-templates/pr-style-review.yml"
+STYLE_SRC="$ROOT/.github/workflow-templates/pr-style-review-copilot.yml"
 AWAIT_SRC="$ROOT/.github/workflow-templates/awaiting-your-action.yml"
 PRECOMMIT_SRC="$ROOT/standard/.pre-commit-config.yaml"
 LINT_SRC="$ROOT/standard/workflows/lint.yml"
@@ -37,7 +37,7 @@ MODE=$([ $APPLY = 1 ] && echo APPLY || echo DRY-RUN)
 SKIP_RE='^(\.github|pr-newspaper|obsidian)$'
 # Optional pilot: REPO_ONLY=tommybot ./scripts/sync.sh --apply  restricts to one repo.
 ONLY="${REPO_ONLY:-}"
-# Cloudflare / bespoke-deploy repos: standardize lint+@claude, DON'T touch deploys.
+# Cloudflare / bespoke-deploy repos: standardize lint+@copilot, DON'T touch deploys.
 CF_RE='^(robot-geographical-society|maps)$'
 # GitHub-Pages-all-in repo with its own bespoke per-PR preview deploy: leave deploy alone.
 PAGES_EXC_RE='^(walksheds)$'
@@ -47,9 +47,6 @@ RUFF_IN_CI_RE='^(tommybot|obsidian-automations|home-weather-hub|tallest-tree)$'
 NO_PYLINT_RE='^(walksheds-wiki|walksheds-dev-wiki)$'
 
 echo "== sync.sh [$MODE]  org=$ORG =="
-if [ $APPLY = 1 ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  echo "ERROR: export CLAUDE_CODE_OAUTH_TOKEN before --apply (mint via: claude setup-token)"; exit 1
-fi
 
 api_exists() { gh api "repos/$OWNER/$1/contents/$2" >/dev/null 2>&1; }
 
@@ -65,24 +62,16 @@ for full in $repos; do
   [[ "$r" =~ $PAGES_EXC_RE ]] && tags="$tags [pages-exception: deploy untouched]"
   [ -n "$tags" ] && echo " $tags"
 
-  # 1) OAuth secret
-  if gh secret list --repo "$OWNER/$r" 2>/dev/null | grep -q '^CLAUDE_CODE_OAUTH_TOKEN'; then
-    echo "  secret CLAUDE_CODE_OAUTH_TOKEN : present"
-  else
-    echo "  secret CLAUDE_CODE_OAUTH_TOKEN : MISSING -> set"
-    [ $APPLY = 1 ] && gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$OWNER/$r" --body "$CLAUDE_CODE_OAUTH_TOKEN"
-  fi
-
   # decide the file changes (collected, then applied once via one PR)
   changes=()
-  if api_exists "$r" ".github/workflows/claude.yml"; then
-    echo "  claude.yml       : present (refresh to canonical)"
+  if api_exists "$r" ".github/workflows/copilot.yml"; then
+    echo "  copilot.yml      : present (refresh to canonical)"
   else
-    echo "  claude.yml       : MISSING -> add"
+    echo "  copilot.yml      : MISSING -> add"
   fi
-  changes+=("put:.github/workflows/claude.yml:$CLAUDE_SRC")
+  changes+=("put:.github/workflows/copilot.yml:$COPILOT_SRC")
   if [[ "$r" =~ $PAGES_EXC_RE ]]; then
-    echo "  NOTE: walksheds has an embedded @claude job in ci.yml — remove it by hand to avoid double-trigger."
+    echo "  NOTE: walksheds has an embedded @copilot job in ci.yml — remove it by hand to avoid double-trigger."
   fi
 
   # PR-description gates: the hard structural CI gate + the agentic style/length gate.
@@ -110,6 +99,11 @@ for full in $repos; do
   if api_exists "$r" ".github/workflows/pr-newspaper.yml"; then
     echo "  pr-newspaper.yml : present -> REMOVE"
     changes+=("del:.github/workflows/pr-newspaper.yml")
+  fi
+
+  if api_exists "$r" ".github/workflows/claude.yml"; then
+    echo "  claude.yml       : present -> REMOVE (replaced by copilot.yml)"
+    changes+=("del:.github/workflows/claude.yml")
   fi
 
   if { api_exists "$r" "pyproject.toml" || api_exists "$r" "requirements.txt"; } && ! [[ "$r" =~ $NO_PYLINT_RE ]]; then
@@ -140,11 +134,11 @@ for full in $repos; do
         elif [ "$op" = del ]; then git rm -q --ignore-unmatch "${rest}"; fi
       done
       if ! git diff --cached --quiet; then
-        git commit -q -m "chore: standardize @claude / PR gates / lint (via robogeosociety/.github sync)"
+        git commit -q -m "chore: standardize @copilot / PR gates / lint (via robogeosociety/.github sync)"
         git push -q -u --force origin "$BRANCH"
         gh pr view "$BRANCH" >/dev/null 2>&1 && { echo "  (PR already open)"; } || \
-        gh pr create --head "$BRANCH" --title "Standardize: @claude + PR description gates + lint" \
-          --body "Automated sync from robogeosociety/.github. Canonical @claude workflow, the hard pr-structure-gate + agentic pr-style-review PR-description gates, pre-commit/ruff for Python, old newspaper workflow removed. 🤖 Generated with Claude Code" || true
+        gh pr create --head "$BRANCH" --title "Standardize: @copilot + PR description gates + lint" \
+          --body "Automated sync from robogeosociety/.github. Native Copilot coding agent, the hard pr-structure-gate + agentic pr-style-review (via GitHub Models API) PR-description gates, pre-commit/ruff for Python, old claude.yml + newspaper workflows removed." || true
       fi
     )
     rm -rf "$tmp"
@@ -153,7 +147,7 @@ done
 
 echo; echo "== done [$MODE] =="
 if [ $APPLY = 0 ]; then
-  echo "Re-run with --apply (and CLAUDE_CODE_OAUTH_TOKEN exported) to set secrets and open PRs."
+  echo "Re-run with --apply to open PRs."
 fi
 # Last line's exit status becomes the script's own — with `[ $APPLY = 0 ] && echo ...`
 # a false test (i.e. every --apply run) left the script exiting 1 even when every repo

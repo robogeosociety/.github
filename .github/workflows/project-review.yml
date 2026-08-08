@@ -38,15 +38,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
 
-      - name: Install Claude Code
-        run: curl -fsSL https://claude.ai/install.sh | bash
-
       - name: Review
         env:
           # `project` scope. GITHUB_TOKEN cannot read or write org Projects v2 at
-          # all, so without this the job sees no boards.
+          # all, so without this the job sees no boards. Also used for GitHub Models
+          # API calls (Copilot Pro).
           GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"

@@ -1,0 +1,42 @@
+name: Copilot Coding Agent
+
+# Native GitHub Copilot coding agent — replaces the old claude.yml responder.
+# Source of truth: robogeosociety/.github. Synced by scripts/sync.sh.
+# Auth: built-in GITHUB_TOKEN (no extra secret required).
+#
+# Triggered when Copilot is assigned to an issue or when @copilot is mentioned.
+# The agent opens a PR with the implementation. Enable "Copilot coding agent"
+# in repo Settings → Copilot for this to work.
+
+on:
+  issues:
+    types: [opened, assigned]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  copilot:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@copilot')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@copilot')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@copilot')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@copilot') || contains(github.event.issue.title, '@copilot')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      models: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copilot Coding Agent
+        uses: github/copilot-action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,123 @@
+name: PR Style Review
+
+# Flexible, judgment-based counterpart to the hard pr-structure-gate. Runs the
+# newspaper framework's *soft* rules via the GitHub Models API (Copilot Pro):
+# length budget (with room to double for complex code), Wired voice, mermaid
+# sanity, and linking related issues. Posts a single advisory comment and NEVER
+# blocks the merge.
+#
+# Auth: GITHUB_TOKEN with `models: read` permission (included with Copilot Pro).
+# Source of truth: robogeosociety/.github. One-click-selectable from the Actions UI.
+# Full rules + voice: PR_FRAMEWORK.md.
+
+on:
+  pull_request:
+    types: [opened, edited, ready_for_review]
+
+# Coalesce a burst of description edits into one review per PR.
+concurrency:
+  group: pr-style-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  style-review:
+    # Skip bots and drafts we aren't ready to review; opt out per-PR with a label.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-style-review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      models: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gather PR context
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "## PR Body" > /tmp/pr-context.md
+          gh pr view "$PR_NUMBER" --json body -q .body >> /tmp/pr-context.md
+          echo -e "\n## Diff (first 8000 chars)\n\`\`\`" >> /tmp/pr-context.md
+          gh pr diff "$PR_NUMBER" | head -c 8000 >> /tmp/pr-context.md
+          echo -e "\n\`\`\`" >> /tmp/pr-context.md
+          echo -e "\n## Open issues in this repo" >> /tmp/pr-context.md
+          gh issue list --state open --limit 20 --json number,title -q '.[] | "- #\(.number): \(.title)"' >> /tmp/pr-context.md
+
+      - name: Style review via GitHub Models
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          FRAMEWORK=""
+          if [ -f PR_FRAMEWORK.md ]; then
+            FRAMEWORK=$(cat PR_FRAMEWORK.md)
+          fi
+          CONTEXT=$(cat /tmp/pr-context.md)
+
+          SYSTEM_PROMPT=$(cat <<'SYSTEM'
+          You are the "newspaper" STYLE EDITOR for a pull request.
+
+          A separate hard CI gate (pr-structure-gate) already enforces the required
+          markdown spine — headline, dek, masthead, heading levels, alt text — so do
+          NOT re-check structure. Your job is the flexible, judgment-based layer that
+          a regex cannot do. Keep it ADVISORY: suggest, never block.
+
+          Review for:
+
+          1. LENGTH BUDGET (with judgment). Default target is ~1–2 iPad-mini pages.
+             If — and only if — this is a genuinely complex *code* change (large
+             non-prose churn), allow up to ~4 pages. Pure docs/vault churn stays at
+             the 2-page default. Flag padding, walls of text, buried ledes; praise tight ones.
+          2. WIRED VOICE & FLOW. Headline evocative but accurate? Dek stands alone?
+             Pyramid order (Why → What → Flow → Screens → Verification → Risk)?
+          3. DIAGRAMS THAT MAKE SENSE. Sanity-check every mermaid block against the
+             actual diff. If a diagram is nonsensical, mislabeled, contradicts the
+             change, or is oriented horizontally (LR/RL) so it overflows the narrow
+             column, say so specifically and suggest the corrected diagram.
+          4. RELATED ISSUES. From the list of open issues provided, identify ones this
+             PR relates to. Reference as `Related: #N` or `Closes #N`.
+
+          Post exactly ONE concise, actionable review. If the description is tight and
+          correct, say "LGTM — reads clean, no changes needed". Do not manufacture nitpicks.
+          SYSTEM
+          )
+
+          # Build the JSON payload for GitHub Models API
+          # gpt-4o for quality style review (vs gpt-4o-mini used for batch ranking in project_review.py)
+          PAYLOAD=$(jq -n \
+            --arg system "$SYSTEM_PROMPT" \
+            --arg framework "$FRAMEWORK" \
+            --arg context "$CONTEXT" \
+            '{
+              model: "openai/gpt-4o",
+              messages: [
+                {role: "system", content: $system},
+                {role: "user", content: ("PR Framework:\n" + $framework + "\n\n---\n\n" + $context)}
+              ],
+              max_tokens: 1500
+            }')
+
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/models-response.json \
+            -H "Authorization: ******" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://models.github.com/chat/completions")
+
+          if [ "$HTTP_CODE" -ge 400 ] || [ ! -s /tmp/models-response.json ]; then
+            echo "::warning::GitHub Models API returned HTTP $HTTP_CODE"
+            REVIEW="Style review unavailable — GitHub Models API returned HTTP $HTTP_CODE."
+          else
+            REVIEW=$(jq -r '.choices[0].message.content? // "Style review unavailable — unexpected response format."' /tmp/models-response.json)
+          fi
+
+          # Post as a PR comment
+          gh pr comment "$PR_NUMBER" --body "$REVIEW"
