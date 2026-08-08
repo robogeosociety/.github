@@ -50,10 +50,17 @@ jobs:
           NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          # The scheduled run writes; a manual run defaults to reporting only, so
-          # `workflow_dispatch` is a safe way to see what it would do.
+          # NOTHING WRITES ON A SCHEDULE — report-only until the ranking has been
+          # read against a real board. Priority had never existed on #7 (353 items)
+          # before 2026-08-08, so the first scheduled run would have been both the
+          # debut of the field and the debut of the ranking that fills it, unread.
+          #
+          # To turn writes on once Monday's list looks right: add
+          # `[ "${{ github.event_name }}" = "schedule" ] ||` to the test below. The
+          # fences stay either way — 25 items per run, and a priority a human set is
+          # never overwritten.
           APPLY=""
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then
+          if [ "${{ inputs.apply }}" = "true" ]; then
             APPLY="--apply"
           fi
           POST=""
