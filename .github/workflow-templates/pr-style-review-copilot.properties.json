@@ -1,0 +1,6 @@
+{
+  "name": "PR Style Review (Copilot)",
+  "description": "Agentic, non-blocking length/style/diagram reviewer for the newspaper PR framework. Uses GitHub Models API via Copilot Pro — no external secrets required.",
+  "iconName": "octicon-copilot",
+  "categories": ["Automation", "Code Review"]
+}

@@ -30,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -330,11 +331,9 @@ def _signed_post(path: str, payload: dict, timeout: int = 45) -> dict:
 def vault_context(queries: list) -> tuple[str, dict]:
     """Dev-vault passages for the busiest work, via deploy-gate's /search.
 
-    Fetched HERE rather than handed to the model as a tool. `claude -p` ships with
-    tools enabled and, left to choose, will sometimes spend its turns reaching for
-    them — measured at 16 turns and 3 denials on an identical prompt during the
-    card-enrich work. Retrieval in Python keeps the call deterministic and keeps
-    the turn budget for reasoning.
+    Fetched HERE rather than handed to the model as a tool. The Models API is a
+    single-turn completion endpoint with no tool-use, so retrieval must happen in
+    Python before the call. This keeps the request deterministic and cheap.
     """
     if not NOTIFY_SECRET:
         return "", {}
@@ -368,27 +367,10 @@ def recent_dev_activity() -> list:
 
 # ── ranking ──────────────────────────────────────────────────────────────────
 
-# Same posture as card_enrich: tools denied by name, said plainly in the system
-# prompt, settings sources off. Denying tools does not stop the model ASKING for
-# one — it still burns a turn — so the ceiling has headroom.
-NO_TOOLS = [
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "WebFetch",
-    "WebSearch",
-    "Task",
-    "TodoWrite",
-    "NotebookEdit",
-    "BashOutput",
-    "KillShell",
-    "SlashCommand",
-    "ExitPlanMode",
-]
-MAX_TURNS = 8
+# GitHub Models API — replaces `claude -p` subprocess. Uses the same GH_TOKEN
+# that already has `project` scope; Models access is included with Copilot Pro.
+MODELS_URL = "https://models.github.com/chat/completions"
+REVIEW_MODEL = os.environ.get("REVIEW_MODEL", "openai/gpt-4o-mini")
 SYSTEM = (
     "You are ranking work that has already been described to you in full. You have "
     "no tools, no repository and no network. Never attempt to look anything up or "
@@ -424,38 +406,43 @@ def rank(candidates: list, context: str, activity: list) -> tuple[list, dict]:
         "evidence: a thing can be old because nobody needs it.\n"
         'Reply with JSON only: {"items":[{"key":"repo#123","priority":"P1","why":"<=12 words"}]}'
     )
-    proc = subprocess.run(
-        [
-            "claude",
-            "-p",
-            "--model",
-            os.environ.get("REVIEW_MODEL", "haiku"),
-            "--output-format",
-            "json",
-            "--max-turns",
-            str(MAX_TURNS),
-            "--disallowed-tools",
-            *NO_TOOLS,
-            "--setting-sources",
-            "",
-            "--strict-mcp-config",
-            "--append-system-prompt",
-            SYSTEM,
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    body = json.dumps({
+        "model": REVIEW_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": prompt},
         ],
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=300,
+        "max_tokens": 2000,
+        "temperature": 0.2,
+    }).encode()
+    req = urllib.request.Request(
+        MODELS_URL,
+        data=body,
+        headers={
+            "Authorization": f"******",
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
-    if proc.returncode != 0:
-        print(f"ranking failed rc={proc.returncode}: {proc.stdout[-500:]}", file=sys.stderr)
-        return [], {}
+    t0 = time.time()
     try:
-        payload = json.loads(proc.stdout)
-        text = payload.get("result") or ""
-        stats = _stats(payload)
-    except json.JSONDecodeError:
+        with urllib.request.urlopen(req, timeout=120) as res:
+            payload = json.loads(res.read())
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as err:
+        print(f"ranking failed: {err}", file=sys.stderr)
         return [], {}
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    usage = payload.get("usage") or {}
+    stats = {
+        "model": payload.get("model") or REVIEW_MODEL,
+        "inputTokens": usage.get("prompt_tokens") or 0,
+        "outputTokens": usage.get("completion_tokens") or 0,
+        "totalMs": elapsed_ms,
+    }
+
+    text = (payload.get("choices") or [{}])[0].get("message", {}).get("content", "")
     # The model wraps JSON in prose often enough that finding the object beats
     # insisting on a clean parse and discarding an otherwise good answer.
     start, end = text.find("{"), text.rfind("}")
@@ -470,28 +457,6 @@ def rank(candidates: list, context: str, activity: list) -> tuple[list, dict]:
     if len(valid) < len(items):
         print(f"dropped {len(items) - len(valid)} items with an unknown priority", file=sys.stderr)
     return valid, stats
-
-
-def _stats(payload: dict) -> dict:
-    u = payload.get("usage") or {}
-    fresh = u.get("input_tokens") or 0
-    cw = u.get("cache_creation_input_tokens") or 0
-    cr = u.get("cache_read_input_tokens") or 0
-    used = payload.get("modelUsage") or {}
-    return {
-        "model": next(iter(used.values()), {}).get("canonicalModel") or "claude",
-        "inputTokens": fresh + cw + cr,
-        "freshInputTokens": fresh,
-        "cacheWriteTokens": cw,
-        "cacheReadTokens": cr,
-        "outputTokens": u.get("output_tokens") or 0,
-        "turns": payload.get("num_turns"),
-        "maxTurns": MAX_TURNS,
-        "toolCalls": None,
-        "totalMs": payload.get("duration_ms"),
-        "llmMs": payload.get("duration_api_ms"),
-        "truncated": payload.get("subtype") == "error_max_turns",
-    }
 
 
 # ── the one mutation ─────────────────────────────────────────────────────────
