@@ -77,32 +77,97 @@ def gql(query: str, **variables) -> dict:
     return out["data"]
 
 
-def search_all(query: str, limit: int = 200) -> list:
-    """Paged issue/PR search. GitHub caps a page at 100 and the org is past that."""
+ITEM_SHAPE = """
+  number title url updatedAt createdAt
+  repository{ name }
+  labels(first:10){ nodes{ name } }
+  projectItems(first:5){ totalCount }
+"""
+
+PR_SHAPE = (
+    ITEM_SHAPE
+    + """
+  isDraft reviewDecision merged mergedAt
+  commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+"""
+)
+
+
+def org_repos() -> list:
+    """Every non-archived repo name in the org."""
     out, cursor = [], None
-    while len(out) < limit:
+    while True:
         page = gql(
-            """query($q:String!,$after:String){
-                 search(query:$q, type:ISSUE, first:100, after:$after){
-                   pageInfo{ hasNextPage endCursor }
-                   nodes{
-                     __typename
-                     ... on Issue { number title url updatedAt createdAt
-                       repository{name} labels(first:10){nodes{name}}
-                       projectItems(first:5){totalCount} comments{totalCount} }
-                     ... on PullRequest { number title url updatedAt createdAt isDraft
-                       repository{name} labels(first:10){nodes{name}}
-                       projectItems(first:5){totalCount} reviewDecision
-                       commits(last:1){nodes{commit{statusCheckRollup{state}}}} }
-                   } } }""",
-            q=query,
-            after=cursor or "",
-        )["search"]
-        out.extend(page["nodes"])
+            """query($o:String!,$after:String){ organization(login:$o){
+                 repositories(first:100, after:$after, isArchived:false){
+                   pageInfo{ hasNextPage endCursor } nodes{ name } } } }""",
+            o=ORG,
+            after=cursor,
+        )["organization"]["repositories"]
+        out += [n["name"] for n in page["nodes"]]
         if not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
-    return out[:limit]
+    return out
+
+
+def _repo_items(repo: str, kind: str, states: str) -> list:
+    """Open (or recently merged) items in one repo. Paged."""
+    field = "issues" if kind == "issue" else "pullRequests"
+    shape = ITEM_SHAPE if kind == "issue" else PR_SHAPE
+    out, cursor = [], None
+    while True:
+        try:
+            page = gql(
+                f"""query($o:String!,$r:String!,$after:String){{ repository(owner:$o,name:$r){{
+                      {field}(states:{states}, first:100, after:$after,
+                              orderBy:{{field:UPDATED_AT, direction:DESC}}){{
+                        pageInfo{{ hasNextPage endCursor }} nodes{{ {shape} }} }} }} }}""",
+                o=ORG,
+                r=repo,
+                after=cursor,
+            )["repository"][field]
+        except RuntimeError as err:
+            # One unreadable repo must not zero the whole report. Named, not swallowed.
+            print(f"  {repo}.{field}: {str(err)[:90]}", file=sys.stderr)
+            return []
+        typename = "Issue" if kind == "issue" else "PullRequest"
+        out += [{**n, "__typename": typename} for n in page["nodes"]]
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        cursor = page["pageInfo"]["endCursor"]
+    return out
+
+
+def all_open(kind: str) -> list:
+    """Open issues or PRs across the org, by walking repositories.
+
+    NOT the GraphQL `search` connection. Search returned "Resource not accessible by
+    personal access token" the moment PROJECT_SYNC_TOKEN gained org repository
+    permissions on 2026-08-08 — it had worked while the token could see public
+    repos
+    only. Repository traversal costs one query per repo but is plainly permissioned,
+    and it keeps `projectItems`, which the REST search endpoint does not return at
+    all and which the coverage report depends on.
+    """
+    items = []
+    for repo in org_repos():
+        items += _repo_items(repo, kind, "OPEN")
+    items.sort(key=lambda i: i["updatedAt"])
+    return items
+
+
+def merged_recently(days: int = 7) -> list:
+    """Recently merged PRs — the strongest signal of where attention actually is."""
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    out = []
+    for repo in org_repos():
+        for pr in _repo_items(repo, "pr", "MERGED"):
+            if (pr.get("mergedAt") or "") >= cutoff:
+                out.append(pr)
+            else:
+                break  # ordered by updatedAt desc — the rest are older
+    return out
 
 
 def days_since(iso: str) -> int:
@@ -206,8 +271,8 @@ def visibility() -> dict:
 def find_stale(policy: dict) -> dict:
     """Items nobody has touched. Reported only — never closed, labelled or nudged."""
     s = policy["staleness"]
-    prs = search_all(f"org:{ORG} is:open is:pr sort:updated-asc")
-    issues = search_all(f"org:{ORG} is:open is:issue sort:updated-asc")
+    prs = all_open("pr")
+    issues = all_open("issue")
 
     stale_prs = [
         p
@@ -290,8 +355,8 @@ def find_coverage_gaps(stale: dict, projects: list, policy: dict) -> dict:
     exempt = set(policy.get("coverage", {}).get("exempt_repos") or [])
     orphans: dict[str, int] = {}
     for item in [
-        *search_all(f"org:{ORG} is:open is:issue"),
-        *search_all(f"org:{ORG} is:open is:pr"),
+        *all_open("issue"),
+        *all_open("pr"),
     ]:
         if item.get("projectItems", {}).get("totalCount"):
             continue
@@ -358,8 +423,7 @@ def vault_context(queries: list) -> tuple[str, dict]:
 
 def recent_dev_activity() -> list:
     """What the org actually merged this week — the strongest signal of focus."""
-    since = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
-    merged = search_all(f"org:{ORG} is:pr is:merged merged:>={since}", limit=60)
+    merged = merged_recently()
     by_repo: dict[str, int] = {}
     for p in merged:
         by_repo[p["repository"]["name"]] = by_repo.get(p["repository"]["name"], 0) + 1
