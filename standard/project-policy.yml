@@ -86,6 +86,42 @@ projects:
     limits: {}
     wip_exempt: true
 
+  # ── created 2026-08-08 by ops/board_bootstrap.py ──────────────────────────
+  # Four clusters of active repos had no board at all while tommybot had one to
+  # itself. Limits are on In Progress only: these boards were bulk-loaded with the
+  # existing backlog, so a limit on Todo would report a breach on the day they were
+  # created and every day after. Add Ready/In review limits once work actually
+  # flows through them.
+  - number: 10
+    name: maps
+    # 67 items on arrival, 23 already stale — 59 of them from
+    # robot-geographical-society, which the daily check-in calls a graveyard. The
+    # Freshness field marks them, so the board shows the backlog rather than hiding
+    # it inside a total.
+    limits:
+      In Progress: 3
+
+  - number: 11
+    name: sites
+    # Nine web repos, one of which (tommyroar.github.io) could not be added: the
+    # taxonomy files it under `web`, but it lives on the personal account, and an
+    # org project cannot hold a personal repo.
+    limits:
+      In Progress: 3
+
+  - number: 12
+    name: models
+    # Excludes tommybot, which has board #3 to itself.
+    limits:
+      In Progress: 3
+
+  - number: 13
+    name: fleet
+    # supervisor alone. It is absent from scripts/repo-categories.tsv entirely,
+    # which is why it had no board — its work was split across #7, #1 and #2.
+    limits:
+      In Progress: 2
+
 # Projects that exist but hold nothing. Listed so the report can say "still empty"
 # once and then stop, rather than rediscovering them every Monday. Delete the
 # project or delete the entry.

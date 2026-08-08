@@ -50,11 +50,21 @@ PRIORITIES = ["P0", "P1", "P2", "P3"]
 
 
 def gql(query: str, **variables) -> dict:
-    """GraphQL against the org. Raises on error — a partial board read is worse
-    than no report, because it silently understates every count."""
+    """GraphQL via a JSON request body, not `-F` key=value.
+
+    `gh api graphql -F opts=<json>` sends the JSON as a STRING, and the API rejects
+    it: `Variable $opts of type [ProjectV2SingleSelectFieldOptionInput!]! was
+    provided invalid value`. That only bites on a mutation carrying a structured
+    variable — creating a single-select field — so it survived every read and every
+    scalar-only write, and would have surfaced first on the scheduled run that
+    creates a Priority field on a board lacking one.
+
+    Posting {query, variables} as the body handles every type the schema has.
+    """
+    body = json.dumps({"query": query, "variables": variables})
     proc = subprocess.run(
-        ["gh", "api", "graphql", "-f", f"query={query}"]
-        + [arg for k, v in variables.items() for arg in ("-F", f"{k}={v}")],
+        ["gh", "api", "graphql", "--input", "-"],
+        input=body,
         capture_output=True,
         text=True,
         timeout=120,
@@ -506,7 +516,7 @@ def ensure_priority_field(project: dict, apply: bool) -> tuple[str | None, dict]
                name:"Priority", singleSelectOptions:$opts}){
                projectV2Field{ ... on ProjectV2SingleSelectField { id options{ id name } } } } }""",
         p=project["id"],
-        opts=json.dumps(
+        opts=(
             [
                 {"name": n, "color": c, "description": d}
                 for n, c, d in [
