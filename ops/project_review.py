@@ -88,9 +88,20 @@ PR_SHAPE = (
     ITEM_SHAPE
     + """
   isDraft reviewDecision merged mergedAt
-  commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
 """
 )
+
+# statusCheckRollup lives under commits, and reading commits needs Contents/Checks —
+# NOT `Pull requests: Read`. On a public repo that costs nothing; on a private one
+# GitHub refuses the WHOLE query, so asking for it lost every PR in
+# obsidian-automations, infra, tommybot, discobots, supervisor and blender while
+# their issues came back fine. Measured 2026-08-08: 19 open PRs reported, 53 real.
+#
+# Requested separately and allowed to fail. The red-checks section degrades where
+# the token cannot see checks; the PR list never does.
+PR_CHECKS_SHAPE = """
+  commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+"""
 
 
 def org_repos() -> list:
@@ -111,10 +122,14 @@ def org_repos() -> list:
     return out
 
 
-def _repo_items(repo: str, kind: str, states: str) -> list:
-    """Open (or recently merged) items in one repo. Paged."""
+def _repo_items(repo: str, kind: str, states: str, with_checks: bool = False) -> list:
+    """Open (or recently merged) items in one repo. Paged.
+
+    `with_checks` asks for the status rollup as well, which needs permissions beyond
+    Pull requests: Read. Callers retry without it rather than losing the repo.
+    """
     field = "issues" if kind == "issue" else "pullRequests"
-    shape = ITEM_SHAPE if kind == "issue" else PR_SHAPE
+    shape = ITEM_SHAPE if kind == "issue" else PR_SHAPE + (PR_CHECKS_SHAPE if with_checks else "")
     out, cursor = [], None
     while True:
         try:
@@ -152,7 +167,16 @@ def all_open(kind: str) -> list:
     """
     items = []
     for repo in org_repos():
-        items += _repo_items(repo, kind, "OPEN")
+        got = (
+            _repo_items(repo, kind, "OPEN", with_checks=(kind == "pr"))
+            if kind == "pr"
+            else _repo_items(repo, kind, "OPEN")
+        )
+        # A PR query that asked for check status and was refused is retried without
+        # it. Losing the red-checks section for one repo beats losing its PRs.
+        if kind == "pr" and not got:
+            got = _repo_items(repo, kind, "OPEN")
+        items += got
     items.sort(key=lambda i: i["updatedAt"])
     return items
 
