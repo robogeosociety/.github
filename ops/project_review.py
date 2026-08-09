@@ -122,11 +122,23 @@ def org_repos() -> list:
     return out
 
 
-def _repo_items(repo: str, kind: str, states: str, with_checks: bool = False) -> list:
-    """Open (or recently merged) items in one repo. Paged.
+# Repos whose PRs could not be read even without the check rollup. Reported, not
+# swallowed: a repo the job cannot see is a hole in every count below it, and the
+# whole point of the visibility banner is that silence is not evidence of absence.
+UNREADABLE: set[str] = set()
 
-    `with_checks` asks for the status rollup as well, which needs permissions beyond
-    Pull requests: Read. Callers retry without it rather than losing the repo.
+
+def _repo_items(repo: str, kind: str, states: str, with_checks: bool = False) -> list | None:
+    """Open (or recently merged) items in one repo, or None if the query was refused.
+
+    None rather than []: an empty list has to mean "this repo has no such items", or
+    a refusal and a genuinely quiet repo become the same thing — which is how the
+    caller ended up retrying every repo that simply had no open PRs.
+
+    Silent by design. `with_checks` asks for a status rollup that needs permissions
+    beyond `Pull requests: Read`, so a refusal here is EXPECTED on private repos and
+    the caller retries without it. Logging at this level printed twelve
+    "graphql failed" lines per run for failures that were all recovered.
     """
     field = "issues" if kind == "issue" else "pullRequests"
     shape = ITEM_SHAPE if kind == "issue" else PR_SHAPE + (PR_CHECKS_SHAPE if with_checks else "")
@@ -142,10 +154,8 @@ def _repo_items(repo: str, kind: str, states: str, with_checks: bool = False) ->
                 r=repo,
                 after=cursor,
             )["repository"][field]
-        except RuntimeError as err:
-            # One unreadable repo must not zero the whole report. Named, not swallowed.
-            print(f"  {repo}.{field}: {str(err)[:90]}", file=sys.stderr)
-            return []
+        except RuntimeError:
+            return None
         typename = "Issue" if kind == "issue" else "PullRequest"
         out += [{**n, "__typename": typename} for n in page["nodes"]]
         if not page["pageInfo"]["hasNextPage"]:
@@ -165,18 +175,29 @@ def all_open(kind: str) -> list:
     and it keeps `projectItems`, which the REST search endpoint does not return at
     all and which the coverage report depends on.
     """
-    items = []
+    items, degraded = [], []
     for repo in org_repos():
-        got = (
-            _repo_items(repo, kind, "OPEN", with_checks=(kind == "pr"))
-            if kind == "pr"
-            else _repo_items(repo, kind, "OPEN")
-        )
-        # A PR query that asked for check status and was refused is retried without
-        # it. Losing the red-checks section for one repo beats losing its PRs.
-        if kind == "pr" and not got:
+        got = _repo_items(repo, kind, "OPEN", with_checks=(kind == "pr"))
+        if got is None and kind == "pr":
+            # Expected on private repos: the check rollup needs Contents/Checks.
+            # Retry without it — the red-checks section degrades, the PR list does not.
             got = _repo_items(repo, kind, "OPEN")
+            if got is not None:
+                degraded.append(repo)
+        if got is None:
+            UNREADABLE.add(f"{repo} ({kind})")
+            print(
+                f"  cannot read {kind}s in {repo} — its items are missing from this report",
+                file=sys.stderr,
+            )
+            continue
         items += got
+    if degraded:
+        # One line, not one per repo, and phrased as what it is rather than as an error.
+        print(
+            f"  check status unavailable in {len(degraded)} repo(s): {', '.join(degraded)}",
+            file=sys.stderr,
+        )
     items.sort(key=lambda i: i["updatedAt"])
     return items
 
@@ -186,7 +207,7 @@ def merged_recently(days: int = 7) -> list:
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     out = []
     for repo in org_repos():
-        for pr in _repo_items(repo, "pr", "MERGED"):
+        for pr in _repo_items(repo, "pr", "MERGED") or []:
             if (pr.get("mergedAt") or "") >= cutoff:
                 out.append(pr)
             else:
@@ -701,6 +722,12 @@ def render(
     )
 
     sections = []
+
+    if UNREADABLE:
+        sections.append(
+            f"⚠️ **Could not read {len(UNREADABLE)} source(s):** {', '.join(sorted(UNREADABLE))}. "
+            "Their items are missing from every count below."
+        )
 
     # Stated first, because everything below it is wrong if the token is partial.
     if vis and vis.get("repos_total") and vis["repos_visible"] < vis["repos_total"]:
