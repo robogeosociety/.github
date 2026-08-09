@@ -345,3 +345,16 @@ def test_unreadable_sources_are_declared_in_the_report():
         assert "dark (pr)" in parts[0]
     finally:
         pr.UNREADABLE.clear()
+
+
+def test_a_missing_cli_skips_ranking_rather_than_failing_the_run(monkeypatch):
+    """`curl | bash` exits 0 even when the installer failed inside the pipe. On
+    2026-08-08 that left no binary and killed the whole review deep in the ranking
+    call — after every count had already been gathered successfully."""
+    monkeypatch.setattr(pr.shutil, "which", lambda _n: None)
+    called = []
+    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **k: called.append(a))
+    item = {"key": "a#1", "repo": "a", "title": "t", "age": 1, "state": "PR"}
+    ranked, stats = pr.rank([item], "", [])
+    assert ranked == [] and stats == {}
+    assert not called, "tried to run a CLI it had already established was absent"
