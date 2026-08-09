@@ -288,3 +288,60 @@ def test_an_unknown_visibility_is_not_reported_as_a_problem():
     # A failed probe must not print a scary banner built from missing numbers.
     _, parts = pr.render(EMPTY_STALE, [], {}, [], {}, {"error": "boom"})
     assert "incomplete" not in " ".join(parts).lower()
+
+
+# ── refusal vs emptiness ─────────────────────────────────────────────────────
+#
+# `_repo_items` returned [] for both "no such items" and "the query was refused".
+# That conflation cost twice: every repo with genuinely zero open PRs was retried
+# for nothing, and a repo that failed BOTH attempts was indistinguishable from a
+# quiet one — silently missing from counts that looked complete.
+
+
+def test_a_refusal_is_none_and_an_empty_repo_is_a_list(monkeypatch):
+    monkeypatch.setattr(pr, "gql", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("refused")))
+    assert pr._repo_items("x", "pr", "OPEN") is None
+
+    empty = {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False}, "nodes": []}}}
+    monkeypatch.setattr(pr, "gql", lambda *a, **k: empty)
+    assert pr._repo_items("x", "pr", "OPEN") == []
+
+
+def test_the_pr_list_survives_a_check_rollup_refusal(monkeypatch):
+    """The measured failure: private repos refuse `commits{statusCheckRollup}`, and
+    the first version threw away all their PRs rather than the one heading."""
+    pr.UNREADABLE.clear()
+    monkeypatch.setattr(pr, "org_repos", lambda: ["private-one"])
+    calls = []
+
+    def fake(repo, kind, states, with_checks=False):
+        calls.append(with_checks)
+        if with_checks:
+            return None  # what a private repo actually does
+        return [{"number": 1, "updatedAt": "2026-08-01T00:00:00Z", "repository": {"name": repo}}]
+
+    monkeypatch.setattr(pr, "_repo_items", fake)
+    out = pr.all_open("pr")
+    assert len(out) == 1, "a check-rollup refusal lost the PRs"
+    assert calls == [True, False], "did not retry without the rollup"
+    assert not pr.UNREADABLE, "a recovered repo was recorded as unreadable"
+
+
+def test_a_repo_that_fails_both_attempts_is_recorded(monkeypatch):
+    pr.UNREADABLE.clear()
+    monkeypatch.setattr(pr, "org_repos", lambda: ["dark"])
+    monkeypatch.setattr(pr, "_repo_items", lambda *a, **k: None)
+    assert pr.all_open("pr") == []
+    # Not silence: the report says which sources it could not read.
+    assert any("dark" in u for u in pr.UNREADABLE)
+
+
+def test_unreadable_sources_are_declared_in_the_report():
+    pr.UNREADABLE.clear()
+    pr.UNREADABLE.add("dark (pr)")
+    try:
+        _, parts = pr.render(EMPTY_STALE, [], {}, [], {})
+        assert "Could not read" in parts[0]
+        assert "dark (pr)" in parts[0]
+    finally:
+        pr.UNREADABLE.clear()
