@@ -28,6 +28,7 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -513,6 +514,12 @@ def rank(candidates: list, context: str, activity: list) -> tuple[list, dict]:
     cost the whole review.
     """
     if not candidates:
+        return [], {}
+    # Ranking is the enrichment, not the report. A missing CLI degrades it the same
+    # way a Vectorize outage degrades vault context — the stale, WIP and coverage
+    # sections are what someone opens this for, and they need no model at all.
+    if not shutil.which("claude"):
+        print("claude not on PATH — skipping the ranking section", file=sys.stderr)
         return [], {}
     lines = [
         f"- {c['key']} ({c['repo']}, {c['age']}d idle, {c['state']}): {c['title'][:90]}"
