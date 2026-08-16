@@ -1002,6 +1002,36 @@ def render_brief(stale: dict, wip: list, ranked: list) -> tuple[str, str, int]:
     return title, "\n\n".join(parts), len(decisions)
 
 
+def sticky_issue(label: str, color: str, desc: str, title: str, body: str) -> str:
+    """One open issue per label, refreshed in place. Returns its URL.
+
+    The shared escalation shape for the daily audits (workflow-breach,
+    alarm-anomaly): findings accumulate into whichever issue is open, editing
+    never re-notifies, and closing it is the human's statement that the slate
+    is clear. Labels are ensured idempotently first, so the first run on an
+    unreconciled repo cannot fail on a missing label.
+    """
+    repo = BRIEF_REPO
+    for name, c, d in [
+        (label, color, desc),
+        ("human-task", "D93F0B", "Needs Tommy's hands — operator runbook (gh-task-human)"),
+    ]:
+        _gh(["label", "create", name, "--repo", repo, "--color", c,
+             "--description", d, "--force"])
+    existing = json.loads(
+        _gh(["issue", "list", "--repo", repo, "--label", label,
+             "--state", "open", "--json", "number"])
+    )
+    if existing:
+        n = existing[0]["number"]
+        _gh(["issue", "edit", str(n), "--repo", repo, "--body-file", "-"], input=body)
+        return f"https://github.com/{repo}/issues/{n}"
+    out = _gh(["issue", "create", "--repo", repo, "--title", title,
+               "--label", label, "--label", "human-task",
+               "--body-file", "-"], input=body)
+    return out.strip().splitlines()[-1]
+
+
 def post_brief(title: str, body: str) -> str:
     """Create or refresh the brief issue. Returns its URL.
 

@@ -49,13 +49,12 @@ from project_review import (
     NO_TOOLS,
     NOTIFY_SECRET,
     SYSTEM,
-    _gh,
     _signed_post,
     _stats,
+    sticky_issue,
 )
 
 LOOKBACK_HOURS = int(os.environ.get("DEV_LOOKBACK_HOURS", "26"))
-BREACH_REPO = os.environ.get("BRIEF_REPO", "robogeosociety/.github")
 BREACH_LABEL = "workflow-breach"
 
 # Everything the model sees per message / in total. #dev is mostly bot embeds;
@@ -220,32 +219,14 @@ def render(findings: list, scanned: int) -> tuple[str, str]:
 
 
 def post_issue(body: str) -> str:
-    """One open breach issue at a time, refreshed in place. Returns its URL.
-
-    Unlike the ops brief there is no weekly identity: findings accumulate into
-    whichever breach issue is open, and closing it is the human's statement that
-    the slate is clear.
-    """
-    repo = BREACH_REPO
-    for name, color, desc in [
-        (BREACH_LABEL, "B60205", "A #dev post suggests the workflow was bypassed"),
-        ("human-task", "D93F0B", "Needs Tommy's hands — operator runbook (gh-task-human)"),
-    ]:
-        _gh(["label", "create", name, "--repo", repo, "--color", color,
-             "--description", desc, "--force"])
-    existing = json.loads(
-        _gh(["issue", "list", "--repo", repo, "--label", BREACH_LABEL,
-             "--state", "open", "--json", "number"])
+    """The sticky breach issue (shared shape: project_review.sticky_issue)."""
+    return sticky_issue(
+        BREACH_LABEL,
+        "B60205",
+        "A #dev post suggests the workflow was bypassed",
+        "Workflow breaches — spotted in #dev",
+        body,
     )
-    if existing:
-        n = existing[0]["number"]
-        _gh(["issue", "edit", str(n), "--repo", repo, "--body-file", "-"], input=body)
-        return f"https://github.com/{repo}/issues/{n}"
-    out = _gh(["issue", "create", "--repo", repo,
-               "--title", "Workflow breaches — spotted in #dev",
-               "--label", BREACH_LABEL, "--label", "human-task",
-               "--body-file", "-"], input=body)
-    return out.strip().splitlines()[-1]
 
 
 def main() -> int:

@@ -1,0 +1,94 @@
+name: ops-alarm-audit
+
+# The daily read of #ops for alarms that don't make sense — pages about retired
+# services, recoveries with no failure, the same heartbeat-stale notice firing
+# for days unacknowledged, severities that don't match their content. Judged
+# against the org's accumulated context: the window itself, the dev vault over
+# Vectorize (deploy-gate /search), and the pattern digest in
+# ops/alarm_audit.py. Findings post a card to #dev (the operator-attention
+# lane; #ops stays machines-only) and land in ONE sticky `alarm-anomaly` issue.
+# A day where every alarm fits posts a one-liner and opens nothing.
+#
+# Sibling of dev-breach-check.yml: same bridge (deploy-gate /dev-log, channel:
+# ops — discobots#211), same NOTIFY_SECRET, nothing new to provision. Until the
+# channel-aware lane is deployed the job exits 0 with a skip notice.
+
+on:
+  schedule:
+    # Daily 15:17 UTC — half an hour after the breach check, so the two cards
+    # land as a pair rather than interleaving.
+    - cron: "17 15 * * *"
+  workflow_dispatch:
+    inputs:
+      post:
+        description: "Post the card to #dev"
+        type: boolean
+        default: false
+      issue:
+        description: "Open/refresh the anomaly issue on findings"
+        type: boolean
+        default: false
+      # The retro-sweep knobs: "what should have been flagged this week" is
+      # hours=168, max_messages=1000, and a bigger model than the daily tick.
+      hours:
+        description: "Lookback window in hours (gate caps at 168)"
+        type: string
+        default: "26"
+      max_messages:
+        description: "How many pages the model reads (newest kept)"
+        type: string
+        default: "120"
+      model:
+        description: "Judgment model (haiku for the daily tick; sonnet for sweeps)"
+        type: string
+        default: "haiku"
+
+concurrency:
+  group: ops-alarm-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # The anomaly issue is in THIS repo, written with the run's own token.
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      # Same verified install as project-review: `curl | bash` exits 0 even when
+      # the installer fails inside the pipe, so prove the binary exists here.
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v claude >/dev/null || { echo "installer exited 0 but left no claude binary"; exit 1; }
+          claude --version
+
+      - name: Audit
+        env:
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          BRIEF_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Empty on scheduled runs; the script's own defaults apply there.
+          OPS_LOOKBACK_HOURS: ${{ inputs.hours || '26' }}
+          OPS_MAX_MESSAGES: ${{ inputs.max_messages || '120' }}
+          REVIEW_MODEL: ${{ inputs.model || 'haiku' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          # Scheduled runs post and file; manual dispatch defaults to report-only
+          # so a pattern-digest experiment never pings anyone by accident.
+          POST=""; ISSUE=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.post }}" = "true" ]; then
+            POST="--post"
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.issue }}" = "true" ]; then
+            ISSUE="--issue"
+          fi
+          uv run python ops/alarm_audit.py $POST $ISSUE
+
+      - name: Unit tests
+        run: uv run --with pyyaml --with pytest pytest ops/tests -q

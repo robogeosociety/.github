@@ -46,3 +46,5 @@ ops-brief	1D76DB	The weekly decisions issue — defaults apply if unanswered
 # The daily #dev breach check's sticky issue (ops/dev_breach.py). Same story as
 # ops-brief: only ever used in .github, provisioned everywhere for one taxonomy.
 workflow-breach	B60205	A #dev post suggests the workflow was bypassed
+# The daily #ops alarm audit's sticky issue (ops/alarm_audit.py) — same story.
+alarm-anomaly	FBCA04	A #ops page doesn't fit the org's known alarm patterns
