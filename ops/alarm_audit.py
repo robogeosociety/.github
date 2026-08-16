@@ -52,8 +52,15 @@ from project_review import (
 
 LOOKBACK_HOURS = int(os.environ.get("OPS_LOOKBACK_HOURS", "26"))
 ALARM_LABEL = "alarm-anomaly"
-MAX_MESSAGES = 120
+# How much of the window the model actually reads. Env-tunable because the
+# audit has two modes: the daily tick (a day fits in 120) and the retro sweep
+# ("what should have been flagged this week"), where truncating to the newest
+# 120 would silently audit Thursday and call it the week.
+MAX_MESSAGES = int(os.environ.get("OPS_MAX_MESSAGES", "120"))
 MAX_CHARS = 400
+# Ask the gate for its own maximum; the server clamps. Requesting less would
+# quietly narrow a sweep to whatever this constant said.
+FETCH_LIMIT = 1000
 
 # The anomaly classes, named so a finding lands as a diagnosis rather than a
 # vibe. Distilled from the org's own incident history (host-drift, the two dead
@@ -84,7 +91,7 @@ def fetch_messages(hours: int = LOOKBACK_HOURS, post=_signed_post) -> list:
     it quiet is the exact failure class this job hunts, so that reply is a
     RuntimeError with a name, not a scan.
     """
-    res = post("/dev-log", {"hours": hours, "limit": 300, "channel": "ops"})
+    res = post("/dev-log", {"hours": hours, "limit": FETCH_LIMIT, "channel": "ops"})
     if not res.get("ok"):
         raise RuntimeError(f"/dev-log refused: {json.dumps(res)[:200]}")
     if res.get("channel") != "#ops":

@@ -32,7 +32,7 @@ def test_the_audit_asks_for_ops():
         return {"ok": True, "channel": "#ops", "messages": []}
 
     aa.fetch_messages(hours=26, post=fake_post)
-    assert calls == [("/dev-log", {"hours": 26, "limit": 300, "channel": "ops"})]
+    assert calls == [("/dev-log", {"hours": 26, "limit": aa.FETCH_LIMIT, "channel": "ops"})]
 
 
 def test_a_gate_serving_the_wrong_channel_is_refused():

@@ -28,6 +28,20 @@ on:
         description: "Open/refresh the anomaly issue on findings"
         type: boolean
         default: false
+      # The retro-sweep knobs: "what should have been flagged this week" is
+      # hours=168, max_messages=1000, and a bigger model than the daily tick.
+      hours:
+        description: "Lookback window in hours (gate caps at 168)"
+        type: string
+        default: "26"
+      max_messages:
+        description: "How many pages the model reads (newest kept)"
+        type: string
+        default: "120"
+      model:
+        description: "Judgment model (haiku for the daily tick; sonnet for sweeps)"
+        type: string
+        default: "haiku"
 
 concurrency:
   group: ops-alarm-audit
@@ -59,6 +73,10 @@ jobs:
           NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
           BRIEF_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Empty on scheduled runs; the script's own defaults apply there.
+          OPS_LOOKBACK_HOURS: ${{ inputs.hours || '26' }}
+          OPS_MAX_MESSAGES: ${{ inputs.max_messages || '120' }}
+          REVIEW_MODEL: ${{ inputs.model || 'haiku' }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           # Scheduled runs post and file; manual dispatch defaults to report-only
