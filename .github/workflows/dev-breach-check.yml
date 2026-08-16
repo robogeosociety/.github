@@ -1,0 +1,82 @@
+name: dev-breach-check
+
+# The daily read of #dev for posts that indicate the workflow was bypassed —
+# deploys around the gate, "pending Tommy" with no human-task issue, decisions
+# made in chat that never landed on a board, red checks merged anyway. Findings
+# post a card back to #dev and land in ONE sticky `workflow-breach` issue
+# (labelled `human-task`, so the waiting-on-you queue pings). A quiet day posts
+# a one-liner and opens nothing. Full rules digest: ops/dev_breach.py.
+#
+# Lives HERE for the same reason project-review does: this repo is where the
+# org's operational credentials already sit, and the check needs two more —
+#   DISCORD_BOT_TOKEN  secret: a READ-scoped bot token for #dev. Deploy-gate's
+#                      write-only /notify bridge deliberately has no read
+#                      endpoint, so reading takes its own, smaller credential.
+#   DEV_CHANNEL_ID     variable: the #dev channel id (not a secret; it's in
+#                      every message link).
+# Until both are provisioned the job exits 0 with a skip notice — shipped ahead
+# of its credential ceremony rather than red every morning.
+
+on:
+  schedule:
+    # Daily 14:47 UTC — after the morning check-in embed (08:00 US-Pacific) has
+    # landed, so the scan window includes it.
+    - cron: "47 14 * * *"
+  workflow_dispatch:
+    inputs:
+      post:
+        description: "Post the card to #dev"
+        type: boolean
+        default: false
+      issue:
+        description: "Open/refresh the breach issue on findings"
+        type: boolean
+        default: false
+
+concurrency:
+  group: dev-breach-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # The breach issue is in THIS repo, written with the run's own token.
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      # Same verified install as project-review: `curl | bash` exits 0 even when
+      # the installer fails inside the pipe, so prove the binary exists here.
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v claude >/dev/null || { echo "installer exited 0 but left no claude binary"; exit 1; }
+          claude --version
+
+      - name: Check
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DEV_CHANNEL_ID: ${{ vars.DEV_CHANNEL_ID }}
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          BRIEF_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          # Scheduled runs post and file; manual dispatch defaults to report-only
+          # so a rules-digest experiment never pings anyone by accident.
+          POST=""; ISSUE=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.post }}" = "true" ]; then
+            POST="--post"
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.issue }}" = "true" ]; then
+            ISSUE="--issue"
+          fi
+          uv run python ops/dev_breach.py $POST $ISSUE
+
+      - name: Unit tests
+        run: uv run --with pyyaml --with pytest pytest ops/tests -q

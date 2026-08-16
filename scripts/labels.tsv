@@ -43,3 +43,6 @@ skip-design-review	5319E7	Bypass the agentic design-review on this proposal issu
 # Opened by ops/project_review.py --brief; only ever used in the .github repo,
 # but provisioned everywhere so the taxonomy has one source of truth.
 ops-brief	1D76DB	The weekly decisions issue — defaults apply if unanswered
+# The daily #dev breach check's sticky issue (ops/dev_breach.py). Same story as
+# ops-brief: only ever used in .github, provisioned everywhere for one taxonomy.
+workflow-breach	B60205	A #dev post suggests the workflow was bypassed
