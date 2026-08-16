@@ -4,6 +4,11 @@ Account-wide defaults for Tommy's repos. The PR description format is a
 **newspaper / information pyramid** that reads top-to-bottom on an iPad-mini
 portrait display. Full rules + voice: [`PR_FRAMEWORK.md`](PR_FRAMEWORK.md).
 
+**How the org is run:** [`OPERATIONS.md`](OPERATIONS.md) — the inversion of
+control. Claude manages the cadence (weekly review, board reconciliation,
+design + code reviews); Tommy answers the **ops brief**, one Monday issue
+holding only the decisions, each with a default that applies if unanswered.
+
 ## What's here
 - **`.github/pull_request_template.md`** — the newspaper skeleton. Auto-applies to
   public repos with no template of their own; private repos vendor their own copy.

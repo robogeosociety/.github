@@ -32,6 +32,12 @@ staleness:
   # A PR whose checks are red is stale in a different sense — it is blocked, not
   # forgotten — so it is reported under its own heading rather than by age.
   report_failing_checks: true
+  # Labels that answer the staleness question before it is asked. `parked` means
+  # "deliberately shelved" — reporting it as stale anyway would nag about a
+  # decision already made, and would leave the ops brief's "park it" lever
+  # moving nothing. This is what makes parking real.
+  exempt_labels:
+    - parked
 
 # Per-project WIP limits, keyed by the Projects v2 NUMBER (stable; titles are not).
 # `limits` maps a Status option name to the most items that column should hold.

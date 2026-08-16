@@ -34,3 +34,12 @@ blocked	B60205	Holds auto-merge (blocking-comments gate)
 # here makes the documented bypass actually applicable in every repo.
 skip-structure-gate	5319E7	Bypass the hard pr-structure-gate on this PR
 skip-style-review	5319E7	Bypass the agentic pr-style-review on this PR
+skip-code-review	5319E7	Bypass the agentic pr-code-review on this PR
+skip-design-review	5319E7	Bypass the agentic design-review on this proposal issue
+#
+# ── Inversion of control ───────────────────────────────────────────────────────
+# The weekly ops brief: one issue in robogeosociety/.github holding only the
+# decisions the org needs, each with a default that applies if unanswered.
+# Opened by ops/project_review.py --brief; only ever used in the .github repo,
+# but provisioned everywhere so the taxonomy has one source of truth.
+ops-brief	1D76DB	The weekly decisions issue — defaults apply if unanswered

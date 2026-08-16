@@ -1,0 +1,6 @@
+{
+  "name": "PR Code Review",
+  "description": "Agentic correctness review of the diff — bugs, security, missing tests, blast radius. Advisory single comment; may apply `blocked` to hold the automerge lane on a defect that would break main. Uses CLAUDE_CODE_OAUTH_TOKEN.",
+  "iconName": "octicon-shield-check",
+  "categories": ["Automation", "Code Review"]
+}
