@@ -7,15 +7,12 @@ name: dev-breach-check
 # (labelled `human-task`, so the waiting-on-you queue pings). A quiet day posts
 # a one-liner and opens nothing. Full rules digest: ops/dev_breach.py.
 #
-# Lives HERE for the same reason project-review does: this repo is where the
-# org's operational credentials already sit, and the check needs two more —
-#   DISCORD_BOT_TOKEN  secret: a READ-scoped bot token for #dev. Deploy-gate's
-#                      write-only /notify bridge deliberately has no read
-#                      endpoint, so reading takes its own, smaller credential.
-#   DEV_CHANNEL_ID     variable: the #dev channel id (not a secret; it's in
-#                      every message link).
-# Until both are provisioned the job exits 0 with a skip notice — shipped ahead
-# of its credential ceremony rather than red every morning.
+# Lives HERE for the same reason project-review does: this repo already holds
+# the org's operational credentials, and the check needs NOTHING new — #dev is
+# read through deploy-gate's /dev-log lane (discobots#209) with the same
+# NOTIFY_SECRET the weekly review already posts with. Until that lane is
+# deployed the job exits 0 with a skip notice — shipped ahead of the worker
+# deploy rather than red every morning.
 
 on:
   schedule:
@@ -60,8 +57,6 @@ jobs:
 
       - name: Check
         env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DEV_CHANNEL_ID: ${{ vars.DEV_CHANNEL_ID }}
           NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
           BRIEF_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

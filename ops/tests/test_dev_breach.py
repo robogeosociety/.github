@@ -2,27 +2,25 @@
 
 Three things carry the risk here and the rest is rendering.
 
-The first is the fetch window: Discord pages newest-first, so a paging bug
-either re-reads history forever or — worse — quietly scans only the first page
-and reports "no breaches" over a day it mostly never saw. Silent undercoverage
-is the same failure the weekly review guards against, so the walk is pinned.
+The first is the bridge contract: #dev arrives through deploy-gate's /dev-log
+lane (discobots#209, which owns and tests pagination, the cutoff walk and embed
+folding). This side must pass the window through, reshape timestamps for the
+prompt, cap per-message length, and treat a refusal as a refusal — never as a
+quiet empty day.
 
-The second is that most of #dev's signal lives in bot EMBEDS with empty
-`content`. A reader that only looks at content would scan a near-empty channel
-and honestly report nothing — tested so it can't regress to that.
-
-The third is the escalation posture: no findings must mean no issue and an
+The second is the escalation posture: no findings must mean no issue and an
 info-level card; findings must reuse the one open breach issue rather than
-opening a new one per day. And an unconfigured environment must skip cleanly,
-not fail the schedule.
+opening a new one per day.
 
-No network. The Discord GET, `_gh` and the CLI are stubbed throughout.
+The third is that not-yet-configured states — no NOTIFY_SECRET, a gate that
+predates its read lane — must skip with exit 0, not fail the schedule.
+
+No network. The gate POST, `_gh` and the CLI are stubbed throughout.
 """
 
 import json
 import os
 import sys
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -30,75 +28,45 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import dev_breach as db  # noqa: E402
 
+# ── the bridge contract ──────────────────────────────────────────────────────
 
-def msg(mid, hours_ago=1.0, content="", embeds=(), author="discobot"):
-    ts = datetime.now(UTC) - timedelta(hours=hours_ago)
-    return {
-        "id": str(mid),
-        "timestamp": ts.isoformat(),
-        "content": content,
-        "embeds": list(embeds),
-        "author": {"username": author},
+
+def test_the_window_is_passed_to_the_gate():
+    calls = []
+
+    def fake_post(path, payload):
+        calls.append((path, payload))
+        return {"ok": True, "messages": []}
+
+    db.fetch_messages(hours=26, post=fake_post)
+    assert calls == [("/dev-log", {"hours": 26, "limit": 300})]
+
+
+def test_timestamps_reshape_and_long_posts_truncate():
+    res = {
+        "ok": True,
+        "messages": [
+            {"ts": "2026-08-16T09:05:00.123000+00:00", "author": "discobot", "text": "x" * 5000}
+        ],
     }
-
-
-# ── the fetch window ─────────────────────────────────────────────────────────
-
-
-def test_pagination_walks_past_the_first_page():
-    # 100 fresh messages, then a second page with more — a single-page reader
-    # would scan the first hundred and honestly report a day it never saw.
-    pages = [
-        [msg(i, hours_ago=1, content=f"m{i}") for i in range(100)],
-        [msg(100, hours_ago=2, content="older-but-in-window")],
-    ]
-    calls = []
-
-    def fake_get(url):
-        calls.append(url)
-        return pages[len(calls) - 1]
-
-    out = db.fetch_messages(hours=26, get=fake_get)
-    assert len(out) == 101
-    assert "before=99" in calls[1], "did not page with the last message id"
-
-
-def test_the_cutoff_ends_the_walk():
-    pages = [[msg(1, hours_ago=1, content="fresh"), msg(2, hours_ago=50, content="ancient")]]
-    calls = []
-
-    def fake_get(url):
-        calls.append(url)
-        return pages[0]
-
-    out = db.fetch_messages(hours=26, get=fake_get)
-    assert [m["text"] for m in out] == ["fresh"]
-    assert len(calls) == 1, "kept paging past the cutoff"
-
-
-def test_messages_come_back_oldest_first():
-    page = [msg(1, hours_ago=1, content="newest"), msg(2, hours_ago=3, content="oldest")]
-    out = db.fetch_messages(hours=26, get=lambda _u: page)
-    assert [m["text"] for m in out] == ["oldest", "newest"]
-
-
-# ── embeds are the signal ────────────────────────────────────────────────────
-
-
-def test_bot_embeds_are_read_not_skipped():
-    page = [
-        msg(1, embeds=[{"title": "Deploy approved", "description": "outside the gate"}]),
-        msg(2),  # truly empty: no content, no embeds — carries nothing
-    ]
-    out = db.fetch_messages(hours=26, get=lambda _u: page)
-    assert len(out) == 1
-    assert "Deploy approved" in out[0]["text"] and "outside the gate" in out[0]["text"]
-
-
-def test_long_posts_are_truncated_not_forwarded_whole():
-    page = [msg(1, content="x" * 5000)]
-    out = db.fetch_messages(hours=26, get=lambda _u: page)
+    out = db.fetch_messages(post=lambda _p, _b: res)
+    assert out[0]["ts"] == "08-16 09:05"
+    assert out[0]["author"] == "discobot"
     assert len(out[0]["text"]) == db.MAX_CHARS
+
+
+def test_a_zulu_timestamp_parses_too():
+    # The worker relays Discord's timestamps verbatim; both +00:00 and Z forms
+    # must land, or a Discord formatting change silently kills the run.
+    res = {"ok": True, "messages": [{"ts": "2026-08-16T09:05:00Z", "author": "a", "text": "t"}]}
+    assert db.fetch_messages(post=lambda _p, _b: res)[0]["ts"] == "08-16 09:05"
+
+
+def test_a_refusal_raises_rather_than_scanning_nothing():
+    # {"ok": false} treated as an empty day would report "no breaches" over a
+    # day that was never read — the silent-undercount failure, again.
+    with pytest.raises(RuntimeError):
+        db.fetch_messages(post=lambda _p, _b: {"ok": False, "error": "boom"})
 
 
 # ── judgment fences ──────────────────────────────────────────────────────────
@@ -198,9 +166,39 @@ def test_later_findings_refresh_the_open_issue_not_a_new_one(gh_calls):
 # ── unconfigured is a state, not a failure ───────────────────────────────────
 
 
-def test_missing_credentials_skip_with_exit_zero(monkeypatch, capsys):
-    monkeypatch.setattr(db, "BOT_TOKEN", "")
-    monkeypatch.setattr(db, "CHANNEL_ID", "")
+def test_a_missing_secret_skips_with_exit_zero(monkeypatch, capsys):
+    monkeypatch.setattr(db, "NOTIFY_SECRET", "")
     monkeypatch.setattr(sys, "argv", ["dev_breach.py", "--post", "--issue"])
     assert db.main() == 0
     assert "skipped" in capsys.readouterr().err
+
+
+def test_a_gate_without_the_lane_skips_with_exit_zero(monkeypatch, capsys):
+    """The check ships ahead of the worker deploy. Until discobots#209 is live
+    the gate answers 404 — a documented state, not a red morning."""
+    import urllib.error
+
+    monkeypatch.setattr(db, "NOTIFY_SECRET", "s")
+    monkeypatch.setattr(
+        db,
+        "fetch_messages",
+        lambda: (_ for _ in ()).throw(
+            urllib.error.HTTPError("u", 404, "not found", {}, None)
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["dev_breach.py"])
+    assert db.main() == 0
+    assert "discobots#209" in capsys.readouterr().err
+
+
+def test_any_other_read_failure_is_a_real_failure(monkeypatch):
+    import urllib.error
+
+    monkeypatch.setattr(db, "NOTIFY_SECRET", "s")
+    monkeypatch.setattr(
+        db,
+        "fetch_messages",
+        lambda: (_ for _ in ()).throw(urllib.error.URLError("down")),
+    )
+    monkeypatch.setattr(sys, "argv", ["dev_breach.py"])
+    assert db.main() == 1

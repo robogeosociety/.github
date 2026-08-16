@@ -16,16 +16,16 @@ queue pings) — and only when there are findings. A quiet day posts a one-line
 "nothing found" card and opens no issue: an empty breach report every morning
 trains its reader to stop reading breach reports.
 
-Reads Discord DIRECTLY (`GET /channels/{id}/messages`) rather than through
-deploy-gate: the gate has no read endpoint, and adding one would widen a
-write-only bridge into a read proxy for whoever holds NOTIFY_SECRET. A dedicated
-read-scoped bot token, held only by this repo — the same "the PAT lives here"
-argument that placed project-review — is the smaller surface.
+Reads #dev through deploy-gate's `/dev-log` read lane (discobots#209) with the
+NOTIFY_SECRET this repo already holds — the same signed bridge the card and the
+weekly review already use to post. No Discord credential enters this repo, and
+the paging/embed-folding lives (and is tested) once, in the worker. Until the
+lane is deployed, a 404 from the gate is a documented skip, not a red morning.
 
 Env:
-  DISCORD_BOT_TOKEN   read-scoped bot token (required to fetch; absent → skip)
-  DEV_CHANNEL_ID      the #dev channel id (required to fetch; absent → skip)
-  DEV_LOOKBACK_HOURS  window, default 26 (daily cadence + an hour of slack)
+  NOTIFY_SECRET       the deploy-gate HMAC secret (absent → skip)
+  DEV_LOOKBACK_HOURS  window, default 26 (daily cadence + an hour of slack;
+                      the gate caps at 48)
 
 Usage:
   dev_breach.py                  # report to stdout, write nothing
@@ -40,8 +40,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
-import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 # Shares the fences, the signed /notify path and the gh wrapper with the weekly
 # review — one posture, defined once.
@@ -55,9 +54,6 @@ from project_review import (
     _stats,
 )
 
-DISCORD_API = "https://discord.com/api/v10"
-BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
-CHANNEL_ID = os.environ.get("DEV_CHANNEL_ID", "")
 LOOKBACK_HOURS = int(os.environ.get("DEV_LOOKBACK_HOURS", "26"))
 BREACH_REPO = os.environ.get("BRIEF_REPO", "robogeosociety/.github")
 BREACH_LABEL = "workflow-breach"
@@ -93,58 +89,27 @@ R6  Agents must not widen credentials or copy secrets between homes. Posts
 """
 
 
-def _get(url: str) -> list | dict:
-    req = urllib.request.Request(
-        url,
-        headers={"authorization": f"Bot {BOT_TOKEN}", "user-agent": "rgs-dev-breach/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as res:
-        return json.loads(res.read() or b"[]")
+def fetch_messages(hours: int = LOOKBACK_HOURS, post=_signed_post) -> list:
+    """The lookback window of #dev via the gate, oldest first: [{ts, author, text}].
 
-
-def _text_of(msg: dict) -> str:
-    """Content plus embed titles/descriptions — the signal in #dev lives mostly
-    in bot embeds, and `content` alone is empty for nearly all of them."""
-    parts = [msg.get("content") or ""]
-    for e in msg.get("embeds") or []:
-        parts += [e.get("title") or "", e.get("description") or ""]
-    return " · ".join(p for p in parts if p).strip()
-
-
-def fetch_messages(hours: int = LOOKBACK_HOURS, get=_get) -> list:
-    """The lookback window of #dev, oldest first: [{ts, author, text}].
-
-    Pages with `before` until a message older than the cutoff appears — Discord
-    returns newest first, so the first too-old message ends the walk.
+    The worker owns pagination, the cutoff walk and embed folding (and tests
+    them); this side only reshapes timestamps for the prompt and enforces its
+    own per-message character cap — the model's budget is this script's concern,
+    not the bridge's.
     """
-    cutoff = datetime.now(UTC) - timedelta(hours=hours)
-    out, before = [], None
-    while True:
-        url = f"{DISCORD_API}/channels/{CHANNEL_ID}/messages?limit=100"
-        if before:
-            url += f"&before={before}"
-        page = get(url)
-        if not page:
-            break
-        done = False
-        for msg in page:
-            ts = datetime.fromisoformat(msg["timestamp"])
-            if ts < cutoff:
-                done = True
-                break
-            text = _text_of(msg)
-            if text:
-                out.append(
-                    {
-                        "ts": ts.strftime("%m-%d %H:%M"),
-                        "author": (msg.get("author") or {}).get("username", "?"),
-                        "text": text[:MAX_CHARS],
-                    }
-                )
-        if done or len(page) < 100:
-            break
-        before = page[-1]["id"]
-    out.reverse()
+    res = post("/dev-log", {"hours": hours, "limit": 300})
+    if not res.get("ok"):
+        raise RuntimeError(f"/dev-log refused: {json.dumps(res)[:200]}")
+    out = []
+    for m in res.get("messages") or []:
+        ts = datetime.fromisoformat(m["ts"].replace("Z", "+00:00"))
+        out.append(
+            {
+                "ts": ts.strftime("%m-%d %H:%M"),
+                "author": m.get("author") or "?",
+                "text": (m.get("text") or "")[:MAX_CHARS],
+            }
+        )
     return out
 
 
@@ -293,20 +258,25 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if not BOT_TOKEN or not CHANNEL_ID:
-        # Unconfigured is a documented state, not an error: the check ships ahead
-        # of its credential ceremony (a read-scoped bot token is a human task).
-        # Exit 0 so the schedule stays green rather than crying wolf daily.
-        print(
-            "DISCORD_BOT_TOKEN / DEV_CHANNEL_ID unset — breach check skipped. "
-            "Provision a read-scoped bot token to enable it.",
-            file=sys.stderr,
-        )
+    if not NOTIFY_SECRET:
+        print("NOTIFY_SECRET unset — breach check skipped", file=sys.stderr)
         return 0
 
     try:
         messages = fetch_messages()
-    except (urllib.error.HTTPError, urllib.error.URLError) as err:
+    except urllib.error.HTTPError as err:
+        if err.code == 404:
+            # The gate predates its read lane. A documented state, not an error:
+            # the check ships ahead of the worker deploy (discobots#209) and the
+            # schedule stays green rather than crying wolf every morning.
+            print(
+                "deploy-gate has no /dev-log yet (merge discobots#209) — skipped",
+                file=sys.stderr,
+            )
+            return 0
+        print(f"could not read #dev: {err}", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, RuntimeError) as err:
         print(f"could not read #dev: {err}", file=sys.stderr)
         return 1
 
@@ -320,9 +290,6 @@ def main() -> int:
         card += f"\n-# Tracked in {url}"
 
     if args.post:
-        if not NOTIFY_SECRET:
-            print("NOTIFY_SECRET unset — cannot post", file=sys.stderr)
-            return 1
         _signed_post(
             "/notify",
             {
