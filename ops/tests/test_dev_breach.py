@@ -133,6 +133,8 @@ def test_findings_carry_rule_and_default_in_the_issue_body():
 
 @pytest.fixture
 def gh_calls(monkeypatch):
+    import project_review as pr
+
     calls = []
 
     def fake_gh(args, input=None):
@@ -144,7 +146,9 @@ def gh_calls(monkeypatch):
         return ""
 
     fake_gh.open_issues = []
-    monkeypatch.setattr(db, "_gh", fake_gh)
+    # sticky_issue lives in project_review and both audits ride it, so the stub
+    # goes there — one escalation shape, tested once, through a real caller.
+    monkeypatch.setattr(pr, "_gh", fake_gh)
     return calls
 
 
@@ -156,7 +160,9 @@ def test_first_findings_open_one_labelled_issue(gh_calls):
 
 
 def test_later_findings_refresh_the_open_issue_not_a_new_one(gh_calls):
-    db._gh.open_issues = [{"number": 58}]
+    import project_review as pr
+
+    pr._gh.open_issues = [{"number": 58}]
     url = db.post_issue("body")
     assert url.endswith("/issues/58")
     ops = [a[:2] for a, _ in gh_calls]

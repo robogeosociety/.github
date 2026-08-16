@@ -53,6 +53,7 @@ flowchart TD
 | on PR opened / ready | **code review** — correctness of the diff | one comment (+ `blocked` only for break-main defects) |
 | on PR opened / edited | structure gate (hard) + style review (soft) on the description | comment / check |
 | daily 14:47 UTC | **breach check** — reads a day of `#dev` for posts that indicate the workflow was bypassed (deploys around the gate, "pending Tommy" with no issue, decisions that never landed on a board) | card to `#dev`; a sticky `workflow-breach` + `human-task` issue only on findings |
+| daily 15:17 UTC | **alarm audit** — reads a day of `#ops` for pages that don't fit the org's accumulated context (zombie alarms for retired services, recoveries with no failure, groundhog pages, miscalibrated severities), judged with the dev vault over Vectorize | card to `#dev`; a sticky `alarm-anomaly` + `human-task` issue only on findings |
 | weekly (Mac mini) | fleet-sync standardizes every repo from this one | PRs, never direct pushes |
 
 ## Decision rights
@@ -92,11 +93,15 @@ themselves. The safeguards are structural, not aspirational:
   could not see, first, before any number that depends on it.
 - **`parked` means parked.** Labeling an item `parked` removes it from every
   staleness nag — a decision made once stays made.
-- **The channel is audited against the constitution.** `#dev` is where the
+- **The channels are audited against the constitution.** `#dev` is where the
   machinery confesses; the daily breach check reads it against the rules digest
   in `ops/dev_breach.py` and surfaces posts that look like the workflow was
-  stepped around. A finding is a question, not a verdict — it changes nothing
-  on its own, and a refuted finding is a prompt to tighten the digest.
+  stepped around. `#ops` is where the machinery pages; the daily alarm audit
+  (`ops/alarm_audit.py`) reads it against the org's accumulated context — the
+  vault, the named alarm classes, the window itself — and surfaces pages that
+  don't make sense: monitoring drift, not incident volume. In both, a finding
+  is a question, not a verdict — it changes nothing on its own, and a refuted
+  finding is a prompt to tighten the digest.
 
 ## Where things live
 
