@@ -23,6 +23,10 @@ on:
         description: "Post to #dev"
         type: boolean
         default: true
+      brief:
+        description: "Open/refresh the weekly ops-brief issue"
+        type: boolean
+        default: true
 
 concurrency:
   group: project-review
@@ -30,6 +34,9 @@ concurrency:
 
 permissions:
   contents: read
+  # The ops brief is an issue in THIS repo, written with the run's own token —
+  # not with PROJECT_SYNC_TOKEN, whose blast radius stays read/project-only.
+  issues: write
 
 jobs:
   review:
@@ -54,6 +61,7 @@ jobs:
           # `project` scope. GITHUB_TOKEN cannot read or write org Projects v2 at
           # all, so without this the job sees no boards.
           GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          BRIEF_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
         run: |
@@ -75,7 +83,14 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.post }}" = "true" ]; then
             POST="--post"
           fi
-          uv run --with pyyaml python ops/project_review.py $APPLY $POST
+          # The brief is the inversion of control: the report goes to #dev, the
+          # DECISIONS go to one `human-task` issue here, each with a default that
+          # applies if unanswered. A quiet week opens nothing.
+          BRIEF=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.brief }}" = "true" ]; then
+            BRIEF="--brief"
+          fi
+          uv run --with pyyaml python ops/project_review.py $APPLY $POST $BRIEF
 
       - name: Unit tests
         run: uv run --with pyyaml --with pytest pytest ops/tests -q

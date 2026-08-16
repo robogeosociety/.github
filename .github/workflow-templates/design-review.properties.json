@@ -1,0 +1,6 @@
+{
+  "name": "Design Review",
+  "description": "Label an issue `proposal` and Claude posts one structured design review — problem framing, alternatives, blast radius, sequencing against the org's boards — ending in explicit questions for the operator (labels `human-task` when a decision is needed). Uses CLAUDE_CODE_OAUTH_TOKEN.",
+  "iconName": "octicon-light-bulb",
+  "categories": ["Automation", "Code Review"]
+}

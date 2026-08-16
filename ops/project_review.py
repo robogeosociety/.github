@@ -21,6 +21,7 @@ Usage:
   project_review.py                    # report to stdout, write nothing
   project_review.py --post             # also post the card + thread to #dev
   project_review.py --apply --post     # additionally write Priority to the boards
+  project_review.py --brief            # also open/refresh the weekly ops-brief issue
 """
 
 import argparse
@@ -314,9 +315,17 @@ def visibility() -> dict:
         return {"error": str(err)[:200]}
 
 
+def labels_of(item: dict) -> set[str]:
+    return {n["name"] for n in (item.get("labels") or {}).get("nodes") or []}
+
+
 def find_stale(policy: dict) -> dict:
     """Items nobody has touched. Reported only — never closed, labelled or nudged."""
     s = policy["staleness"]
+    # `parked` (via staleness.exempt_labels) is the human's answer to "this looks
+    # stale": deliberately shelved. Reporting it anyway would nag about a decision
+    # already made — and make parking a lever that doesn't actually move anything.
+    exempt = set(s.get("exempt_labels") or [])
     prs = all_open("pr")
     issues = all_open("issue")
 
@@ -325,8 +334,13 @@ def find_stale(policy: dict) -> dict:
         for p in prs
         if days_since(p["updatedAt"]) >= s["pull_request_days"]
         and (s.get("include_draft_prs") or not p.get("isDraft"))
+        and not (exempt & labels_of(p))
     ]
-    stale_issues = [i for i in issues if days_since(i["updatedAt"]) >= s["issue_days"]]
+    stale_issues = [
+        i
+        for i in issues
+        if days_since(i["updatedAt"]) >= s["issue_days"] and not (exempt & labels_of(i))
+    ]
 
     failing = []
     if s.get("report_failing_checks"):
@@ -345,7 +359,9 @@ def find_stale(policy: dict) -> dict:
         "awaiting_review": [
             p
             for p in prs
-            if p.get("reviewDecision") == "REVIEW_REQUIRED" and days_since(p["updatedAt"]) >= 7
+            if p.get("reviewDecision") == "REVIEW_REQUIRED"
+            and days_since(p["updatedAt"]) >= 7
+            and not (exempt & labels_of(p))
         ],
         "totals": {"prs": len(prs), "issues": len(issues)},
     }
@@ -856,6 +872,173 @@ def pack(sections: list) -> list:
     return parts
 
 
+# ── the weekly brief: decisions, not a feed ──────────────────────────────────
+#
+# The Discord thread above is a report: everything the org looks like this week.
+# This is the inversion of control: ONE GitHub issue holding only the part that
+# needs a human, phrased as decisions, each carrying a default that applies on
+# its own if unanswered. Silence is a decision too — just a slow one. The issue
+# is labelled `human-task`, so awaiting-your-action.yml assigns it and GitHub's
+# own notifications fire; answers are `@claude` comments (the canonical
+# responder) or the existing levers — labels, board moves, policy PRs.
+
+BRIEF_REPO = os.environ.get("BRIEF_REPO", f"{ORG}/.github")
+BRIEF_LABEL = "ops-brief"
+# The brief writes to ONE repo (this one) and needs only `issues: write` there, so
+# it takes its own token — the plain GITHUB_TOKEN of the workflow run — rather
+# than widening PROJECT_SYNC_TOKEN's blast radius to issue writes everywhere.
+BRIEF_TOKEN = os.environ.get("BRIEF_TOKEN", "")
+
+
+def _gh(args: list, input: str | None = None) -> str:
+    env = dict(os.environ)
+    if BRIEF_TOKEN:
+        env["GH_TOKEN"] = BRIEF_TOKEN
+    proc = subprocess.run(
+        ["gh", *args], input=input, capture_output=True, text=True, timeout=60, env=env
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"gh {args[0]} failed: {proc.stderr.strip()[:300]}")
+    return proc.stdout
+
+
+def render_brief(stale: dict, wip: list, ranked: list) -> tuple[str, str, int]:
+    """The Monday issue: (title, body, decision count).
+
+    Zero decisions means NO issue — a brief that opens weekly to say "nothing
+    needs you" trains its reader to stop opening briefs.
+    """
+    week = datetime.now(UTC).strftime("%Y-%m-%d")
+    title = f"Ops brief — week of {week}"
+    decisions = []
+
+    if ranked:
+        rows = "\n".join(
+            f"- `{r['priority']}` {r['key']} — {r.get('why', '')[:60]}" for r in ranked[:15]
+        )
+        decisions.append(
+            "### Suggested priorities — apply or amend\n"
+            f"{rows}\n\n"
+            "**Default:** stays a suggestion; nothing is written to the boards.\n"
+            "**To act:** run the `project-review` workflow with **apply** checked "
+            "(caps at 25 writes, never overwrites a priority you set) — or comment "
+            "`@claude` here with amendments first."
+        )
+
+    verdict_items = [*stale["prs"][:8], *stale["issues"][:8]]
+    if verdict_items:
+        rows = "\n".join(
+            f"- {link(x)} — {days_since(x['updatedAt'])}d idle — {x['title'][:60]}"
+            for x in verdict_items
+        )
+        decisions.append(
+            "### Stale work — ship, park or close\n"
+            f"{rows}\n\n"
+            "**Default:** stays open and reappears here next Monday.\n"
+            "**Levers:** label `parked` to shelve it (drops from this report) · "
+            "label `human-task` to queue it on yourself · close it · or ask "
+            "`@claude` on the item to finish it."
+        )
+
+    over = [b for b in wip if b["kind"] == "over-wip"]
+    if over:
+        rows = "\n".join(
+            f"- **{b['project']}** · {b['column']} — {b['actual']}/{b['limit']}" for b in over
+        )
+        decisions.append(
+            "### Columns over WIP — what leaves?\n"
+            f"{rows}\n\n"
+            "**Default:** the breach is reported again next Monday.\n"
+            "**Levers:** move or park a card, or PR a new limit in "
+            "`standard/project-policy.yml` with a sentence on why."
+        )
+
+    unmanaged = [b for b in wip if b["kind"] in ("no-policy", "dormant-revived")]
+    if unmanaged:
+        rows = []
+        for b in unmanaged:
+            if b["kind"] == "no-policy":
+                rows.append(f"- **{b['project']}** (#{b['number']}) — no WIP policy")
+            else:
+                rows.append(f"- **{b['project']}** — marked dormant, now holds {b['count']}")
+        decisions.append(
+            "### Boards outside the policy — adopt or delete\n"
+            + "\n".join(rows)
+            + "\n\n**Default:** reported as a gap until adopted or deleted.\n"
+            "**Levers:** PR an entry (or a `dormant` removal) in "
+            "`standard/project-policy.yml`, or delete the board."
+        )
+
+    body_head = (
+        "> _Every decision the org needs this week, each with a default. Answer "
+        "inline — or don't: an unanswered decision applies its default and "
+        "reappears next Monday._\n\n"
+        f"Of **{stale['totals']['prs']}** open PRs and **{stale['totals']['issues']}** "
+        "open issues, only what's below needs a human. The full report is in "
+        "#dev's weekly thread; nothing in the org was closed, labelled or "
+        "commented on to produce this.\n"
+    )
+
+    fyi = []
+    if stale["awaiting_review"]:
+        fyi.append(
+            "- waiting on review: "
+            + ", ".join(link(p) for p in stale["awaiting_review"][:8])
+        )
+    if stale["failing"]:
+        fyi.append("- red checks: " + ", ".join(link(p) for p in stale["failing"][:8]))
+
+    parts = [body_head]
+    if decisions:
+        parts.append("## Decisions\n\n" + "\n\n".join(decisions))
+    if fyi:
+        parts.append("## FYI — no decision needed\n" + "\n".join(fyi))
+    parts.append(
+        "---\n"
+        "-# Opened by `ops/project_review.py --brief` (Mondays). `@claude` reads "
+        "this issue — discuss, amend, or delegate in the comments. Close it when "
+        "every decision is handled; next Monday brings a fresh one."
+    )
+    return title, "\n\n".join(parts), len(decisions)
+
+
+def post_brief(title: str, body: str) -> str:
+    """Create or refresh the brief issue. Returns its URL.
+
+    One open brief at a time: a rerun in the same week edits the existing issue
+    in place (no second notification for the same agenda); a new week closes the
+    old brief as superseded — unanswered decisions have already applied their
+    defaults and re-listed themselves in the new one.
+    """
+    repo = BRIEF_REPO
+    # Idempotent, so the brief never fails on a repo whose labels haven't been
+    # reconciled yet. `--force` updates color/description if they drifted.
+    for name, color, desc in [
+        (BRIEF_LABEL, "1D76DB", "The weekly decisions issue — defaults apply if unanswered"),
+        ("human-task", "D93F0B", "Needs Tommy's hands — operator runbook (gh-task-human)"),
+    ]:
+        _gh(["label", "create", name, "--repo", repo, "--color", color,
+             "--description", desc, "--force"])
+
+    open_briefs = json.loads(
+        _gh(["issue", "list", "--repo", repo, "--label", BRIEF_LABEL,
+             "--state", "open", "--json", "number,title"])
+    )
+    same_week = [b for b in open_briefs if b["title"] == title]
+    if same_week:
+        n = same_week[0]["number"]
+        _gh(["issue", "edit", str(n), "--repo", repo, "--body-file", "-"], input=body)
+        return f"https://github.com/{repo}/issues/{n}"
+
+    for old in open_briefs:
+        _gh(["issue", "close", str(old["number"]), "--repo", repo,
+             "--comment", f"Superseded by **{title}** — open decisions carried forward."])
+    out = _gh(["issue", "create", "--repo", repo, "--title", title,
+               "--label", BRIEF_LABEL, "--label", "human-task",
+               "--body-file", "-"], input=body)
+    return out.strip().splitlines()[-1]
+
+
 def load_policy() -> dict:
     import yaml
 
@@ -872,6 +1055,11 @@ def main() -> int:
         help="WRITE Priority to the boards; without it nothing is written",
     )
     ap.add_argument("--no-rank", action="store_true", help="skip the model call")
+    ap.add_argument(
+        "--brief",
+        action="store_true",
+        help="open/refresh the weekly ops-brief issue (decisions only; skipped when empty)",
+    )
     args = ap.parse_args()
 
     policy = load_policy()
@@ -910,6 +1098,14 @@ def main() -> int:
     print(card)
     for p in parts:
         print("\n" + p)
+
+    if args.brief:
+        title, brief_body, ndecisions = render_brief(stale, wip, ranked)
+        if ndecisions:
+            url = post_brief(title, brief_body)
+            print(f"\nops brief: {url} ({ndecisions} decision(s))")
+        else:
+            print("\nops brief: no decisions this week — no issue opened")
 
     if args.post:
         if not NOTIFY_SECRET:

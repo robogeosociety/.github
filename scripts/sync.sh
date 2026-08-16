@@ -24,6 +24,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_SRC="$ROOT/.github/workflow-templates/claude.yml"
 STRUCTURE_SRC="$ROOT/.github/workflow-templates/pr-structure-gate.yml"
 STYLE_SRC="$ROOT/.github/workflow-templates/pr-style-review.yml"
+CODE_SRC="$ROOT/.github/workflow-templates/pr-code-review.yml"
+DESIGN_SRC="$ROOT/.github/workflow-templates/design-review.yml"
 AWAIT_SRC="$ROOT/.github/workflow-templates/awaiting-your-action.yml"
 PRECOMMIT_SRC="$ROOT/standard/.pre-commit-config.yaml"
 LINT_SRC="$ROOT/standard/workflows/lint.yml"
@@ -98,6 +100,22 @@ for full in $repos; do
     echo "  pr-style-review.yml   : MISSING -> add"
   fi
   changes+=("put:.github/workflows/pr-style-review.yml:$STYLE_SRC")
+
+  # The honesty pair: correctness review of every PR's diff, and a design review
+  # of any issue labeled `proposal`. Both advisory single comments; the code
+  # review may apply `blocked` to hold the automerge lane on a breaking defect.
+  if api_exists "$r" ".github/workflows/pr-code-review.yml"; then
+    echo "  pr-code-review.yml    : present (refresh to canonical)"
+  else
+    echo "  pr-code-review.yml    : MISSING -> add"
+  fi
+  changes+=("put:.github/workflows/pr-code-review.yml:$CODE_SRC")
+  if api_exists "$r" ".github/workflows/design-review.yml"; then
+    echo "  design-review.yml     : present (refresh to canonical)"
+  else
+    echo "  design-review.yml     : MISSING -> add"
+  fi
+  changes+=("put:.github/workflows/design-review.yml:$DESIGN_SRC")
 
   # Label-driven "waiting on you" queue (human-task / blocked -> assign + notify).
   if api_exists "$r" ".github/workflows/awaiting-your-action.yml"; then
